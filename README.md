@@ -40,6 +40,7 @@ Only the named translator can accept and submit. Only the publisher can cancel, 
 
 ## Semantic and evidence rules
 
+- Language inputs use normalized language tags such as `en` and `es`, not display names such as `English` and `Spanish`.
 - Source and translation artifacts are HTTPS URLs committed with normalized SHA-256 digests. The reviewer hashes exact raw response bytes before UTF-8 decoding.
 - Optional source and translation images are each separately URL/hash-bound, size-limited, and restricted to PNG, JPEG, or WebP signatures. Up to two images are sent as untrusted visual evidence to the prompt.
 - The prompt explicitly treats document text, images, and the publisher brief as untrusted data; instructions embedded in them must not be followed.
@@ -80,4 +81,4 @@ The contract header pins the GenLayer SDK dependency. Direct Mode is pinned to `
 
 ## Deployment
 
-Polyglot is currently an undeployed local candidate. No deployment address or live lifecycle is claimed. Deployment should happen only after the source is frozen, release checks pass, and a real Studionet account is explicitly selected. See [DESIGN.md](docs/DESIGN.md) and [DEPLOYMENT.md](docs/DEPLOYMENT.md).
+Polyglot v0.1.0 is deployed on Studionet at [`0x1E0239EBd297b29339Ec4cA767388C79EACc9078`](https://explorer-studio.genlayer.com/address/0x1E0239EBd297b29339Ec4cA767388C79EACc9078). The frozen source hash is `498762a5c8b3426f21eb8499ee793e97d77d81a1b437430efb5378f85c3ba1d9`; deployed source parity is verified. A live `pending -> accepted -> submitted -> approved -> payout_dispatched` flow completed, and the child transfer receipt confirmed `0.001 GEN` credited to the designated translator. See [the complete deployment and live-evidence record](docs/DEPLOYMENT.md) for transaction links and the failed-input attempt that left 0.001 GEN unaccounted for in this deployment. That known limitation does not affect the successful task's recorded payout, but it should be considered before using this v0.1.0 deployment for further funded tasks.
