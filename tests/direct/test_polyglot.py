@@ -1,5 +1,7 @@
 import hashlib
 import json
+import struct
+import zlib
 from datetime import datetime, timezone
 
 import pytest
@@ -16,8 +18,24 @@ SOURCE = b"Residents may appeal a refusal within 30 days. The appeal is free."
 TRANSLATION = b"Les residents peuvent faire appel d'un refus dans les 30 jours. L'appel est gratuit."
 SOURCE_IMAGE_URL = "https://notices.example.org/source.png"
 TRANSLATION_IMAGE_URL = "https://translations.example.net/target.png"
-IMAGE = b"\x89PNG\r\n\x1a\npolyglot-test-image"
-PROMPT_PATTERN = r"You are independently checking a translation of an important notice"
+
+
+def _png_chunk(kind, data):
+    checksum = zlib.crc32(kind + data) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", checksum)
+
+
+# Generate a complete valid 1x1 RGB PNG (IHDR, compressed IDAT, IEND).
+IMAGE = (
+    b"\x89PNG\r\n\x1a\n"
+    + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+    + _png_chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00"))
+    + _png_chunk(b"IEND", b"")
+)
+PROMPT_PATTERN = (
+    r"(?s)You are independently checking a translation of an important notice"
+    r".*risk field means material risk introduced"
+)
 APPROVED = {
     "source_language_match": "yes",
     "translation_language_match": "yes",
@@ -52,7 +70,7 @@ def deploy(direct_vm, direct_deploy):
 def create_task(contract, direct_vm, publisher, translator, task_id="PG-001",
                 source=SOURCE, source_image=None, amount=DEPOSIT):
     direct_vm.sender = publisher
-    direct_vm.value = amount
+    direct_vm.value = 0
     accept_by = NOW_TS + 24 * 60 * 60
     completion_by = NOW_TS + 5 * 24 * 60 * 60
     key = contract.create_task(
@@ -60,9 +78,12 @@ def create_task(contract, direct_vm, publisher, translator, task_id="PG-001",
         SOURCE_IMAGE_URL if source_image is not None else "",
         digest(source_image) if source_image is not None else "",
         "Preserve appeal rights, the 30-day deadline, and that filing is free.",
-        accept_by, completion_by,
+        amount, accept_by, completion_by,
     )
+    direct_vm.value = amount
+    assert contract.deposit_credit() == amount
     direct_vm.value = 0
+    contract.fund_task(task_id)
     return key
 
 
@@ -120,9 +141,13 @@ def test_create_info_and_key_hash_bound_funding(direct_vm, direct_deploy, direct
     assert saved["target_language"] == "fr"
     assert saved["reward_wei"] == DEPOSIT
     assert saved["deposited"] == DEPOSIT
+    accounting = contract.get_accounting()
+    assert accounting["total_available_credits"] == 0
+    assert accounting["total_locked_task_escrow"] == DEPOSIT
+    assert accounting["accounted_liabilities"] == DEPOSIT
     info = contract.get_info()
     assert info["name"] == "Polyglot"
-    assert info["version"] == "0.1.0"
+    assert info["version"] == "0.1.1"
     assert info["image_evidence"].startswith("optional_hash_bound")
 
 
@@ -130,12 +155,10 @@ def test_create_info_and_key_hash_bound_funding(direct_vm, direct_deploy, direct
 def test_creation_rejects_bad_source_commitment(direct_vm, direct_deploy, direct_alice, direct_bob, bad_hash):
     contract = deploy(direct_vm, direct_deploy)
     direct_vm.sender = direct_alice
-    direct_vm.value = DEPOSIT
     with direct_vm.expect_revert():
         contract.create_task("PG-BAD", addr(direct_bob), "en", "fr", SOURCE_URL,
-                             bad_hash, "", "", "Preserve meaning", NOW_TS + 86400,
+                             bad_hash, "", "", "Preserve meaning", DEPOSIT, NOW_TS + 86400,
                              NOW_TS + 5 * 86400)
-    direct_vm.value = 0
 
 
 @pytest.mark.parametrize("url", [
@@ -146,28 +169,176 @@ def test_creation_rejects_bad_source_commitment(direct_vm, direct_deploy, direct
 def test_creation_rejects_unsafe_source_urls(direct_vm, direct_deploy, direct_alice, direct_bob, url):
     contract = deploy(direct_vm, direct_deploy)
     direct_vm.sender = direct_alice
-    direct_vm.value = DEPOSIT
     with direct_vm.expect_revert():
         contract.create_task("PG-URL", addr(direct_bob), "en", "fr", url,
-                             digest(SOURCE), "", "", "Preserve meaning", NOW_TS + 86400,
+                             digest(SOURCE), "", "", "Preserve meaning", DEPOSIT, NOW_TS + 86400,
                              NOW_TS + 5 * 86400)
-    direct_vm.value = 0
+
+
+def test_task_ids_are_unique_per_publisher_and_cross_publisher_reads_are_isolated(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie
+):
+    contract = deploy(direct_vm, direct_deploy)
+    create_task(contract, direct_vm, direct_alice, direct_bob, task_id="PG-SHARED")
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert():
+        contract.create_task("PG-SHARED", addr(direct_bob), "en", "fr", SOURCE_URL,
+                             digest(SOURCE), "", "", "Duplicate", DEPOSIT,
+                             NOW_TS + 86400, NOW_TS + 5 * 86400)
+    # A different publisher may use the same local identifier; it is a distinct
+    # namespace and still needs its own deposit/allocation.
+    create_task(contract, direct_vm, direct_charlie, direct_bob, task_id="PG-SHARED")
+    assert contract.get_task(addr(direct_alice), "PG-SHARED")["publisher"].lower() == addr(direct_alice)
+    assert contract.get_task(addr(direct_charlie), "PG-SHARED")["publisher"].lower() == addr(direct_charlie)
+    with direct_vm.expect_revert():
+        contract.get_task(addr(direct_bob), "PG-SHARED")
+    accounting = contract.get_accounting()
+    assert accounting["total_locked_task_escrow"] == DEPOSIT * 2
+    assert accounting["total_available_credits"] == 0
 
 
 def test_zero_or_insufficient_escrow_and_same_language_rejected(direct_vm, direct_deploy, direct_alice, direct_bob):
     contract = deploy(direct_vm, direct_deploy)
     direct_vm.sender = direct_alice
-    direct_vm.value = DEPOSIT - 1
     with direct_vm.expect_revert():
         contract.create_task("PG-LOW", addr(direct_bob), "en", "fr", SOURCE_URL,
-                             digest(SOURCE), "", "", "Preserve meaning", NOW_TS + 86400,
+                             digest(SOURCE), "", "", "Preserve meaning", DEPOSIT - 1, NOW_TS + 86400,
                              NOW_TS + 5 * 86400)
-    direct_vm.value = DEPOSIT
     with direct_vm.expect_revert():
         contract.create_task("PG-LANG", addr(direct_bob), "en", "EN", SOURCE_URL,
-                             digest(SOURCE), "", "", "Preserve meaning", NOW_TS + 86400,
+                             digest(SOURCE), "", "", "Preserve meaning", DEPOSIT, NOW_TS + 86400,
                              NOW_TS + 5 * 86400)
+
+
+def test_invalid_creation_never_accepts_attached_value(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_vm, direct_deploy)
+    direct_vm.sender = direct_alice
+    with direct_vm.expect_revert():
+        contract.create_task("PG-DISPLAY-LANG", addr(direct_bob), "English", "Spanish",
+                             SOURCE_URL, digest(SOURCE), "", "", "Preserve meaning",
+                             DEPOSIT, NOW_TS + 86400, NOW_TS + 5 * 86400)
+    # create_task is nonpayable: language validation cannot accept escrow.
+    with direct_vm.expect_revert():
+        contract.get_task(addr(direct_alice), "PG-DISPLAY-LANG")
+
+
+def test_validated_task_waits_for_account_credit_allocation(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_vm, direct_deploy)
+    direct_vm.sender = direct_alice
+    contract.create_task("PG-PREPARE", addr(direct_bob), "en", "fr", SOURCE_URL,
+                         digest(SOURCE), "", "", "Preserve meaning", DEPOSIT,
+                         NOW_TS + 86400, NOW_TS + 5 * 86400)
+    prepared = contract.get_task(addr(direct_alice), "PG-PREPARE")
+    assert prepared["status"] == "awaiting_funding"
+    assert prepared["reward_wei"] == DEPOSIT
+    assert prepared["deposited"] == 0
+    assert contract.get_available_credit(addr(direct_alice)) == 0
+    direct_vm.value = DEPOSIT
+    assert contract.deposit_credit() == DEPOSIT
     direct_vm.value = 0
+    assert contract.get_available_credit(addr(direct_alice)) == DEPOSIT
+    before = contract.get_accounting()
+    assert before["total_available_credits"] == DEPOSIT
+    assert before["total_locked_task_escrow"] == 0
+    contract.fund_task("PG-PREPARE")
+    after = contract.get_accounting()
+    assert after["total_available_credits"] == 0
+    assert after["total_locked_task_escrow"] == DEPOSIT
+    assert after["accounted_liabilities"] == before["accounted_liabilities"]
+    funded = contract.get_task(addr(direct_alice), "PG-PREPARE")
+    assert funded["status"] == "pending"
+    assert funded["deposited"] == DEPOSIT
+
+
+def test_overpayment_remains_withdrawable_credit_and_never_cross_funds_task(
+    direct_vm, direct_deploy, direct_alice, direct_bob
+):
+    contract = deploy(direct_vm, direct_deploy)
+    direct_vm.sender = direct_alice
+    contract.create_task("PG-OVERPAY", addr(direct_bob), "en", "fr", SOURCE_URL,
+                         digest(SOURCE), "", "", "Preserve meaning", DEPOSIT,
+                         NOW_TS + 86400, NOW_TS + 5 * 86400)
+    direct_vm.value = DEPOSIT * 2
+    contract.deposit_credit()
+    direct_vm.value = 0
+    contract.fund_task("PG-OVERPAY")
+    saved = contract.get_task(addr(direct_alice), "PG-OVERPAY")
+    assert saved["deposited"] == DEPOSIT
+    assert contract.get_available_credit(addr(direct_alice)) == DEPOSIT
+    accounting = contract.get_accounting()
+    assert accounting["total_available_credits"] == DEPOSIT
+    assert accounting["total_locked_task_escrow"] == DEPOSIT
+    assert accounting["accounted_liabilities"] == DEPOSIT * 2
+
+
+@pytest.mark.parametrize("failure", ["unknown_id", "invalid_id", "underfunded", "wrong_sender", "duplicate"])
+def test_allocation_failures_do_not_consume_available_credit(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie, failure
+):
+    contract = deploy(direct_vm, direct_deploy)
+    if failure in ("underfunded", "wrong_sender", "duplicate"):
+        direct_vm.sender = direct_alice
+        contract.create_task("PG-ALLOC", addr(direct_bob), "en", "fr", SOURCE_URL,
+                             digest(SOURCE), "", "", "Preserve meaning", DEPOSIT,
+                             NOW_TS + 86400, NOW_TS + 5 * 86400)
+    if failure != "wrong_sender":
+        credit_owner = direct_alice
+    else:
+        credit_owner = direct_charlie
+    direct_vm.sender = credit_owner
+    direct_vm.value = DEPOSIT if failure != "underfunded" else DEPOSIT - 1
+    contract.deposit_credit()
+    direct_vm.value = 0
+    initial_credit = DEPOSIT if failure != "underfunded" else DEPOSIT - 1
+
+    if failure == "duplicate":
+        contract.fund_task("PG-ALLOC")
+        assert contract.get_task(addr(direct_alice), "PG-ALLOC")["status"] == "pending"
+        # No available credit remains, so a repeated allocation cannot dispatch again.
+        with direct_vm.expect_revert():
+            contract.fund_task("PG-ALLOC")
+        assert contract.get_task(addr(direct_alice), "PG-ALLOC")["deposited"] == DEPOSIT
+        assert contract.get_accounting()["total_locked_task_escrow"] == DEPOSIT
+        return
+
+    target = "missing-task" if failure == "unknown_id" else "bad id!" if failure == "invalid_id" else "PG-ALLOC"
+    direct_vm.sender = direct_charlie if failure == "wrong_sender" else direct_alice
+    with direct_vm.expect_revert():
+        contract.fund_task(target)
+    assert contract.get_available_credit(addr(credit_owner)) == initial_credit
+    assert contract.get_accounting()["total_locked_task_escrow"] == 0
+
+
+def test_unused_credit_withdrawal_is_caller_owned_and_cleared_before_dispatch(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie
+):
+    contract = deploy(direct_vm, direct_deploy)
+    direct_vm.sender = direct_alice
+    direct_vm.value = DEPOSIT
+    contract.deposit_credit()
+    direct_vm.value = 0
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert():
+        contract.withdraw_credit()
+    assert contract.get_available_credit(addr(direct_alice)) == DEPOSIT
+    direct_vm.sender = direct_alice
+    contract.withdraw_credit()
+    assert contract.get_available_credit(addr(direct_alice)) == 0
+    assert contract.get_accounting()["total_available_credits"] == 0
+    with direct_vm.expect_revert():
+        contract.withdraw_credit()
+
+
+def test_publisher_can_cancel_unfunded_prepared_task(direct_vm, direct_deploy, direct_alice, direct_bob):
+    contract = deploy(direct_vm, direct_deploy)
+    direct_vm.sender = direct_alice
+    contract.create_task("PG-UNFUNDED", addr(direct_bob), "en", "fr", SOURCE_URL,
+                         digest(SOURCE), "", "", "Preserve meaning", DEPOSIT,
+                         NOW_TS + 86400, NOW_TS + 5 * 86400)
+    contract.cancel_pending(addr(direct_alice), "PG-UNFUNDED")
+    saved = contract.get_task(addr(direct_alice), "PG-UNFUNDED")
+    assert saved["status"] == "cancelled"
+    assert saved["deposited"] == 0
 
 
 def test_only_named_translator_can_accept_and_submit(direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie):
@@ -309,12 +480,13 @@ def test_malformed_model_output_is_retryable_and_never_approves(
     assert saved["status"] == "retryable"
     assert saved["deposited"] == DEPOSIT
     assert saved["reason"] == "malformed_or_unavailable_model_output"
+    assert saved["attempts"] == 0
 
 
 @pytest.mark.parametrize("artifact", ["source", "translation"])
 @pytest.mark.parametrize("problem, expected", [
-    ("mismatch", "rejected"), ("empty", "rejected"),
-    ("oversize", "rejected"), ("invalid_utf8", "rejected"),
+    ("mismatch", "disputed"), ("empty", "disputed"),
+    ("oversize", "disputed"), ("invalid_utf8", "disputed"),
     ("unavailable", "retryable"),
 ])
 def test_source_failures_never_approve(direct_vm, direct_deploy, direct_alice, direct_bob,
@@ -353,6 +525,55 @@ def test_source_failures_never_approve(direct_vm, direct_deploy, direct_alice, d
     assert saved["status"] == expected
     assert saved["status"] != "approved"
     assert saved["deposited"] == DEPOSIT
+    assert saved["attempts"] == 0
+    if expected == "disputed":
+        assert saved["reason"].startswith(artifact + ":")
+        with direct_vm.expect_revert():
+            contract.settle(addr(direct_alice), "PG-001")
+        direct_vm.warp(at(NOW_TS + 8 * 24 * 60 * 60))
+        with direct_vm.expect_revert():
+            contract.timeout_refund(addr(direct_alice), "PG-001")
+        assert contract.get_task(addr(direct_alice), "PG-001")["deposited"] == DEPOSIT
+
+
+def test_repeated_temporary_failures_are_cooled_down_and_do_not_burn_semantic_attempts(
+    direct_vm, direct_deploy, direct_alice, direct_bob
+):
+    contract = deploy(direct_vm, direct_deploy)
+    create_task(contract, direct_vm, direct_alice, direct_bob)
+    accept_and_submit(contract, direct_vm, direct_alice, direct_bob)
+    direct_vm.mock_web(SOURCE_URL, {"status": 503, "body": b"temporarily unavailable"})
+    direct_vm.mock_web(TRANSLATION_URL, {"status": 200, "body": TRANSLATION})
+    for retry in range(4):
+        if retry:
+            direct_vm.warp(at(NOW_TS + 2 * 60 * 60 + retry * 10 * 60))
+        review(contract, direct_vm, direct_alice)
+        saved = contract.get_task(addr(direct_alice), "PG-001")
+        assert saved["status"] == "retryable"
+        assert saved["attempts"] == 0
+        assert saved["deposited"] == DEPOSIT
+        if retry < 3:
+            with direct_vm.expect_revert():
+                review(contract, direct_vm, direct_alice)
+
+
+def test_evidence_issue_consensus_requires_same_stage_and_reason(
+    direct_vm, direct_deploy, direct_alice, direct_bob
+):
+    contract = deploy(direct_vm, direct_deploy)
+    create_task(contract, direct_vm, direct_alice, direct_bob)
+    accept_and_submit(contract, direct_vm, direct_alice, direct_bob)
+    direct_vm.mock_web(SOURCE_URL, {"status": 200, "body": SOURCE + b" altered"})
+    direct_vm.mock_web(TRANSLATION_URL, {"status": 200, "body": TRANSLATION})
+    review(contract, direct_vm, direct_alice)
+    assert contract.get_task(addr(direct_alice), "PG-001")["status"] == "disputed"
+
+    direct_vm.clear_mocks()
+    # Validators now see temporary source unavailability instead of the leader's
+    # agreed permanent source hash mismatch; that distinction cannot reach consensus.
+    direct_vm.mock_web(SOURCE_URL, {"status": 503, "body": b"temporary"})
+    direct_vm.mock_web(TRANSLATION_URL, {"status": 200, "body": TRANSLATION})
+    assert direct_vm.run_validator() is False
 
 
 def test_optional_hash_bound_images_are_reviewed(direct_vm, direct_deploy, direct_alice, direct_bob):
@@ -379,8 +600,32 @@ def test_invalid_source_or_translation_image_never_approves(
     direct_vm.mock_llm(PROMPT_PATTERN, json.dumps(APPROVED))
     review(contract, direct_vm, direct_alice)
     saved = contract.get_task(addr(direct_alice), "PG-001")
-    assert saved["status"] == "rejected"
+    assert saved["status"] == "disputed"
     assert saved["deposited"] == DEPOSIT
+    assert saved["attempts"] == 0
+
+
+def test_valid_image_fixture_is_a_complete_png():
+    assert IMAGE.startswith(b"\x89PNG\r\n\x1a\n")
+    assert IMAGE.endswith(b"IEND\xaeB`\x82")
+    offset = 8
+    image_data = bytearray()
+    chunk_types = []
+    while offset < len(IMAGE):
+        length = struct.unpack(">I", IMAGE[offset:offset + 4])[0]
+        chunk_type = IMAGE[offset + 4:offset + 8]
+        chunk_data = IMAGE[offset + 8:offset + 8 + length]
+        expected_crc = struct.unpack(">I", IMAGE[offset + 8 + length:offset + 12 + length])[0]
+        assert zlib.crc32(chunk_type + chunk_data) & 0xFFFFFFFF == expected_crc
+        chunk_types.append(chunk_type)
+        if chunk_type == b"IDAT":
+            image_data.extend(chunk_data)
+        offset += 12 + length
+        if chunk_type == b"IEND":
+            break
+    assert offset == len(IMAGE)
+    assert chunk_types == [b"IHDR", b"IDAT", b"IEND"]
+    assert zlib.decompress(bytes(image_data)) == b"\x00\x00\x00\x00"
 
 
 def test_prompt_injection_in_committed_artifact_cannot_authorize_by_itself(
@@ -408,6 +653,85 @@ def test_timeout_refunds_pending_and_prevents_replay(direct_vm, direct_deploy, d
     assert saved["deposited"] == 0
     with direct_vm.expect_revert():
         contract.timeout_refund(addr(direct_alice), "PG-001")
+    assert contract.get_accounting()["total_locked_task_escrow"] == 0
+
+
+def test_post_submission_review_deadline_freezes_escrow_for_mutual_resolution(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie
+):
+    contract = deploy(direct_vm, direct_deploy)
+    create_task(contract, direct_vm, direct_alice, direct_bob)
+    accept_and_submit(contract, direct_vm, direct_alice, direct_bob)
+    direct_vm.warp(at(NOW_TS + 13 * 24 * 60 * 60))
+    direct_vm.sender = direct_charlie
+    contract.timeout_refund(addr(direct_alice), "PG-001")
+    saved = contract.get_task(addr(direct_alice), "PG-001")
+    assert saved["status"] == "disputed"
+    assert saved["reason"] == "review_deadline_unresolved"
+    assert saved["settlement"] == "mutual_resolution_required"
+    assert saved["deposited"] == DEPOSIT
+    assert contract.get_accounting()["total_locked_task_escrow"] == DEPOSIT
+    with direct_vm.expect_revert():
+        contract.settle(addr(direct_alice), "PG-001")
+    with direct_vm.expect_revert():
+        contract.timeout_refund(addr(direct_alice), "PG-001")
+
+
+def test_disputed_escrow_requires_both_participants_and_clears_once(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie
+):
+    contract = deploy(direct_vm, direct_deploy)
+    create_task(contract, direct_vm, direct_alice, direct_bob)
+    accept_and_submit(contract, direct_vm, direct_alice, direct_bob)
+    # Committed evidence corruption is not treated as a semantic translator loss.
+    direct_vm.mock_web(SOURCE_URL, {"status": 200, "body": SOURCE + b" changed"})
+    direct_vm.mock_web(TRANSLATION_URL, {"status": 200, "body": TRANSLATION})
+    review(contract, direct_vm, direct_alice)
+    disputed = contract.get_task(addr(direct_alice), "PG-001")
+    assert disputed["status"] == "disputed"
+    assert disputed["deposited"] == DEPOSIT
+    assert contract.get_accounting()["total_locked_task_escrow"] == DEPOSIT
+
+    direct_vm.sender = direct_charlie
+    with direct_vm.expect_revert():
+        contract.propose_dispute_resolution(addr(direct_alice), "PG-001", 5_000)
+    assert contract.get_task(addr(direct_alice), "PG-001")["deposited"] == DEPOSIT
+
+    direct_vm.sender = direct_alice
+    contract.propose_dispute_resolution(addr(direct_alice), "PG-001", 5_000)
+    with direct_vm.expect_revert():
+        # The proposing participant cannot approve their own split.
+        contract.accept_dispute_resolution(addr(direct_alice), "PG-001", 5_000)
+    direct_vm.sender = direct_bob
+    with direct_vm.expect_revert():
+        # The other party must accept the exact proposed allocation.
+        contract.accept_dispute_resolution(addr(direct_alice), "PG-001", 4_999)
+    assert contract.get_task(addr(direct_alice), "PG-001")["deposited"] == DEPOSIT
+
+    contract.accept_dispute_resolution(addr(direct_alice), "PG-001", 5_000)
+    settled = contract.get_task(addr(direct_alice), "PG-001")
+    assert settled["status"] == "dispute_settled"
+    assert settled["settlement"] == "mutual_dispute_resolution_dispatched"
+    assert settled["deposited"] == 0
+    assert settled["dispatched_amount"] == DEPOSIT
+    assert settled["resolution_payout_bps"] == 5_000
+    assert contract.get_accounting()["total_locked_task_escrow"] == 0
+    with direct_vm.expect_revert():
+        contract.accept_dispute_resolution(addr(direct_alice), "PG-001", 5_000)
+
+
+def test_unrelated_wallet_cannot_request_semantic_review(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie
+):
+    contract = deploy(direct_vm, direct_deploy)
+    create_task(contract, direct_vm, direct_alice, direct_bob)
+    accept_and_submit(contract, direct_vm, direct_alice, direct_bob)
+    direct_vm.sender = direct_charlie
+    with direct_vm.expect_revert():
+        contract.review(addr(direct_alice), "PG-001")
+    saved = contract.get_task(addr(direct_alice), "PG-001")
+    assert saved["status"] == "submitted"
+    assert saved["attempts"] == 0
 
 
 def _prepare_validator(direct_vm, direct_deploy, direct_alice, direct_bob, leader):

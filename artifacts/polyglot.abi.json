@@ -4,6 +4,26 @@
     "kwparams": {}
   },
   "methods": {
+    "accept_dispute_resolution": {
+      "params": [
+        [
+          "publisher_text",
+          "string"
+        ],
+        [
+          "task_id",
+          "string"
+        ],
+        [
+          "translator_share_bps",
+          "int"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
     "accept_task": {
       "params": [
         [
@@ -75,6 +95,10 @@
           "string"
         ],
         [
+          "reward_wei",
+          "int"
+        ],
+        [
           "accept_by",
           "int"
         ],
@@ -86,7 +110,43 @@
       "kwparams": {},
       "readonly": false,
       "ret": "string",
+      "payable": false
+    },
+    "deposit_credit": {
+      "params": [],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "int",
       "payable": true
+    },
+    "fund_task": {
+      "params": [
+        [
+          "task_id",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "get_accounting": {
+      "params": [],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "dict"
+    },
+    "get_available_credit": {
+      "params": [
+        [
+          "owner_text",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "int"
     },
     "get_info": {
       "params": [],
@@ -108,6 +168,26 @@
       "kwparams": {},
       "readonly": true,
       "ret": "dict"
+    },
+    "propose_dispute_resolution": {
+      "params": [
+        [
+          "publisher_text",
+          "string"
+        ],
+        [
+          "task_id",
+          "string"
+        ],
+        [
+          "translator_share_bps",
+          "int"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
     },
     "review": {
       "params": [
@@ -184,6 +264,13 @@
           "string"
         ]
       ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "withdraw_credit": {
+      "params": [],
       "kwparams": {},
       "readonly": false,
       "ret": "null",

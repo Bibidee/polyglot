@@ -15,10 +15,14 @@ The design reduces avoidable disagreement by comparing a small derived outcome r
 ## Lifecycle
 
 ```text
-Publisher creates task + deposits reward
+Publisher validates task terms (nonpayable)
         |
         v
-     pending -- publisher cancels before acceptance --> refund dispatched
+ awaiting_funding -- publisher cancels --> cancelled
+        |
+        +-- publisher allocates existing credit --> pending
+                                                   |
+                                                   +-- publisher cancels before acceptance --> refund dispatched
         |
         +-- named translator accepts --> accepted
                                       |
@@ -29,11 +33,13 @@ Publisher creates task + deposits reward
                                                          |                    |                  |
                                                       approved             rejected          inconclusive
                                                          |                    |                  |
-                                                translator payout       publisher refund    no payout;
-                                                                                           bounded retry
+                                                translator payout       publisher refund    bounded review
+                                                                                           or deadline dispute
 
-pending / accepted / submitted / retryable / inconclusive
-        -- corresponding public deadline --> publisher refund
+submitted / retryable / inconclusive -- permanent evidence-integrity failure
+                                      or unresolved review deadline --> disputed
+                                                                       |
+                                      both parties accept same split --+--> dispute_settled
 ```
 
 Only the named translator can accept and submit. Only the publisher can cancel, and only before acceptance. Settlement is permissionless but uses the fixed translator or publisher stored in task state. The `deposited` ledger is zeroed and terminal state written before emitting the transfer. The payout amount comes from that ledger, never from model output or a caller argument.
@@ -45,12 +51,16 @@ Only the named translator can accept and submit. Only the publisher can cancel, 
 - Optional source and translation images are each separately URL/hash-bound, size-limited, and restricted to PNG, JPEG, or WebP signatures. Up to two images are sent as untrusted visual evidence to the prompt.
 - The prompt explicitly treats document text, images, and the publisher brief as untrusted data; instructions embedded in them must not be followed.
 - Approval requires exact bounded fields for source/target language match, meaning, rights/duties, dates/amounts/conditions, exceptions, additions/omissions, risk, confidence, and rationale. Rationale is informational only.
-- Definitive material mismatch is `rejected` and makes the publisher refund available. Uncertainty is `inconclusive`; malformed model output or unavailable sources are `retryable`. None authorizes a payout.
-- Retry attempts are bounded. The public timeout refund prevents an unresolved task from holding funds forever, subject to somebody submitting the refund transaction.
+- The model's `risk` field is defined as material risk introduced or concealed by a source/translation discrepancy, not risk inherent in the original notice and faithfully preserved in translation.
+- A definitive semantic mismatch is `rejected` and permits publisher refund. Valid uncertainty is `inconclusive`; temporary web/provider/consensus failures are `retryable`. These outcomes do not authorize translator payout.
+- Permanent evidence-integrity failures (hash mismatch, empty/oversized/invalid-UTF-8 artifacts, or invalid image content) become `disputed`, not synthetic semantic rejection. An unresolved submitted/retryable/inconclusive task also becomes `disputed` after its review deadline. Neither path pays automatically. Funds move only if publisher and translator both accept the exact same translator-share basis points. Otherwise escrow remains locked; the contract has no safe unilateral fault oracle or dispute timeout.
+- Only the publisher or named translator can request review. A five-minute cooldown applies. The three-attempt limit counts valid semantic assessments only; transient observation/model/consensus failures do not consume those assessment attempts. The review deadline still bounds the review period, after which unresolved work is disputed.
 
 ## Escrow and transfer limits
 
-Creation is payable; `gl.message.value` is the only deposit amount, and deposits below 0.001 GEN are rejected. The agreed `reward_wei` term is stored separately from the actual `deposited` liability. Settlement reads only the deposited ledger, clears it before emitting the transfer, and permits one terminal dispatch per task.
+Task creation is nonpayable. It validates and stores the agreed `reward_wei` in `awaiting_funding` before any payment. The publisher separately calls payable `deposit_credit()`; that minimal method records the attached GEN as credit for the actual sender. The publisher then calls nonpayable `fund_task(task_id)`, which allocates exactly the prepared task's reward from that publisher's existing credit and moves the task to `pending`. Overpayment remains the publisher's withdrawable credit. Invalid IDs, wrong callers, insufficient credit, and duplicate allocation fail in a nonpayable call and therefore cannot consume or misdirect funds. `withdraw_credit()` can withdraw only the caller's unused balance.
+
+The `reward_wei` term remains separate from the actual `deposited` task liability. Aggregate accounting is `total_available_credits + total_locked_task_escrow`; `get_accounting()` reports that liability beside the current contract balance. Allocation moves liability between those ledgers without changing the total. Settlement and credit withdrawal clear their respective ledgers before emitting transfers. This prevents ordinary double-dispatch but cannot recover a downstream child transfer that fails after parent finalization.
 
 `payout_dispatched` means the contract emitted a transfer message; it does not by itself prove the translator's wallet was credited. Integrators should verify the finalized child-transfer receipt and credited value where the network exposes them. A failed downstream transfer may not be recoverable by this contract.
 
@@ -81,4 +91,4 @@ The contract header pins the GenLayer SDK dependency. Direct Mode is pinned to `
 
 ## Deployment
 
-Polyglot v0.1.0 is deployed on Studionet at [`0x1E0239EBd297b29339Ec4cA767388C79EACc9078`](https://explorer-studio.genlayer.com/address/0x1E0239EBd297b29339Ec4cA767388C79EACc9078). The frozen source hash is `498762a5c8b3426f21eb8499ee793e97d77d81a1b437430efb5378f85c3ba1d9`; deployed source parity is verified. A live `pending -> accepted -> submitted -> approved -> payout_dispatched` flow completed, and the child transfer receipt confirmed `0.001 GEN` credited to the designated translator. See [the complete deployment and live-evidence record](docs/DEPLOYMENT.md) for transaction links and the failed-input attempt that left 0.001 GEN unaccounted for in this deployment. That known limitation does not affect the successful task's recorded payout, but it should be considered before using this v0.1.0 deployment for further funded tasks.
+Polyglot v0.1.0 is deployed on Studionet at [`0x1E0239EBd297b29339Ec4cA767388C79EACc9078`](https://explorer-studio.genlayer.com/address/0x1E0239EBd297b29339Ec4cA767388C79EACc9078). Its frozen source hash is `498762a5c8b3426f21eb8499ee793e97d77d81a1b437430efb5378f85c3ba1d9`; deployed source parity is verified. A live `pending -> accepted -> submitted -> approved -> payout_dispatched` flow completed, and the child transfer receipt confirmed `0.001 GEN` credited to the designated translator. The working v0.1.1 source is **not deployed** and does not alter that address. It adds staged deposits, participant-only review, fair-dispute handling for unverifiable evidence, and custody accounting. This revision has 80 passing Direct Mode tests; lint, schema, and preflight pass locally. It has no v0.1.1 deployment, source-parity proof, hosted CI result, or live lifecycle. See [the deployment record](docs/DEPLOYMENT.md) for historical evidence and remaining limitations.
