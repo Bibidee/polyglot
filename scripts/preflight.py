@@ -1,0 +1,87 @@
+from __future__ import annotations
+
+import ast
+import hashlib
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CONTRACTS = ROOT / "contracts"
+CONTRACT = CONTRACTS / "polyglot.py"
+GENVM_VERSION = "v0.2.16"
+SOURCES = sorted(CONTRACTS.glob("*.py"))
+
+if SOURCES != [CONTRACT]:
+    raise SystemExit(f"release gate requires only contracts/polyglot.py; found {[p.name for p in SOURCES]}")
+
+raw = CONTRACT.read_bytes()
+source = raw.decode("utf-8")
+lines = source.splitlines()
+version_match = re.search(r'^VERSION\s*=\s*"(\d+\.\d+\.\d+)"\s*$', source, re.MULTILINE)
+header = re.fullmatch(r"# v(\d+\.\d+\.\d+)", lines[0]) if lines else None
+if not version_match or not header or header.group(1) != version_match.group(1):
+    raise SystemExit("source header and VERSION must match")
+if len(lines) < 2 or not re.fullmatch(r'# \{ "Depends": "py-genlayer:[a-z0-9]+" \}', lines[1]):
+    raise SystemExit("second line must pin the py-genlayer dependency")
+for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
+    if "==" not in line or "rc" in line.lower() or "dev" in line.lower():
+        raise SystemExit(f"release dependency must be pinned to a stable version: {line}")
+
+ast.parse(source, filename=str(CONTRACT))
+subprocess.run([sys.executable, "-m", "compileall", "-q", "contracts", "tests"], cwd=ROOT, check=True)
+
+lint = shutil.which("genvm-lint") or shutil.which("genvm-lint.exe")
+if not lint:
+    candidate = Path(sys.executable).with_name("genvm-lint.exe" if os.name == "nt" else "genvm-lint")
+    if candidate.exists():
+        lint = str(candidate)
+if not lint:
+    raise SystemExit("genvm-lint is required; install requirements.txt")
+
+env = os.environ.copy()
+env["GENVM_VERSION"] = GENVM_VERSION
+subprocess.run([lint, "check", str(CONTRACT), "--json"], cwd=ROOT, check=True, env=env)
+
+tracked_schema = ROOT / "artifacts" / "polyglot.abi.json"
+if not tracked_schema.is_file():
+    raise SystemExit("tracked ABI schema is missing")
+with tempfile.TemporaryDirectory(prefix=".polyglot-schema-", dir=ROOT) as temp_dir:
+    generated = Path(temp_dir) / "polyglot.abi.json"
+    subprocess.run([lint, "schema", str(CONTRACT), "--output", str(generated)], cwd=ROOT, check=True, env=env)
+    if generated.read_bytes() != tracked_schema.read_bytes():
+        raise SystemExit("generated ABI differs from tracked artifacts/polyglot.abi.json")
+
+test_env = os.environ.copy()
+test_env["GENVM_VERSION"] = GENVM_VERSION
+test = subprocess.run(
+    [sys.executable, "-m", "pytest", "tests/direct", "-q"],
+    cwd=ROOT, capture_output=True, text=True, env=test_env,
+)
+print(test.stdout, end="")
+print(test.stderr, end="", file=sys.stderr)
+if test.returncode:
+    raise SystemExit(test.returncode)
+summary = test.stdout + "\n" + test.stderr
+match = re.search(r"(?:^|\s)(\d+) passed(?:,\s*(\d+) skipped)?(?:,\s*(\d+) failed)?\s+in\s", summary)
+if not match:
+    raise SystemExit("pytest summary count could not be verified")
+passed, skipped, failed = (int(value or 0) for value in match.groups())
+if not passed or skipped or failed:
+    raise SystemExit(f"release gate requires passing tests and zero skips: {passed=}, {skipped=}, {failed=}")
+
+print(f"contract_version={version_match.group(1)}")
+print(f"contract_sha256={hashlib.sha256(raw).hexdigest()}")
+print(f"contract_source_bytes={len(raw)}")
+print(f"direct_mode_tests={passed}")
+print(f"tests_skipped={skipped}")
+print(f"tests_failed={failed}")
+print("deployable_contract_sources=1")
+print("lint=PASS")
+print("schema_matches=PASS")
+print("preflight=PASS")

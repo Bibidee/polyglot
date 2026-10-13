@@ -1,0 +1,193 @@
+{
+  "ctor": {
+    "params": [],
+    "kwparams": {}
+  },
+  "methods": {
+    "accept_task": {
+      "params": [
+        [
+          "publisher_text",
+          "string"
+        ],
+        [
+          "task_id",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "cancel_pending": {
+      "params": [
+        [
+          "publisher_text",
+          "string"
+        ],
+        [
+          "task_id",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "create_task": {
+      "params": [
+        [
+          "task_id",
+          "string"
+        ],
+        [
+          "translator_text",
+          "string"
+        ],
+        [
+          "source_language_text",
+          "string"
+        ],
+        [
+          "target_language_text",
+          "string"
+        ],
+        [
+          "source_url_text",
+          "string"
+        ],
+        [
+          "source_hash_text",
+          "string"
+        ],
+        [
+          "source_image_url_text",
+          "string"
+        ],
+        [
+          "source_image_hash_text",
+          "string"
+        ],
+        [
+          "brief_text",
+          "string"
+        ],
+        [
+          "accept_by",
+          "int"
+        ],
+        [
+          "completion_by",
+          "int"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "string",
+      "payable": true
+    },
+    "get_info": {
+      "params": [],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "dict"
+    },
+    "get_task": {
+      "params": [
+        [
+          "publisher_text",
+          "string"
+        ],
+        [
+          "task_id",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": true,
+      "ret": "dict"
+    },
+    "review": {
+      "params": [
+        [
+          "publisher_text",
+          "string"
+        ],
+        [
+          "task_id",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "settle": {
+      "params": [
+        [
+          "publisher_text",
+          "string"
+        ],
+        [
+          "task_id",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "submit_translation": {
+      "params": [
+        [
+          "publisher_text",
+          "string"
+        ],
+        [
+          "task_id",
+          "string"
+        ],
+        [
+          "translation_url_text",
+          "string"
+        ],
+        [
+          "translation_hash_text",
+          "string"
+        ],
+        [
+          "translation_image_url_text",
+          "string"
+        ],
+        [
+          "translation_image_hash_text",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    },
+    "timeout_refund": {
+      "params": [
+        [
+          "publisher_text",
+          "string"
+        ],
+        [
+          "task_id",
+          "string"
+        ]
+      ],
+      "kwparams": {},
+      "readonly": false,
+      "ret": "null",
+      "payable": false
+    }
+  }
+}

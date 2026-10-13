@@ -1,0 +1,6 @@
+__pycache__/
+.pytest_cache/
+.gltest-artifacts/
+.polyglot-schema-*/
+.venv/
+.env
