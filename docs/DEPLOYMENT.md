@@ -56,7 +56,8 @@ Current local release-gate snapshot (before the documentation-only closeout comm
 - Git blob: `d138116dac592d0fa5b790d265ede930f029d0ba`
 - Direct Mode tests: `99 passed`, `0 skipped`, `0 failed`
 - GenVM lint: passed (`3` checks); ABI/schema generation and exact preflight schema match: passed; preflight: passed; deployable contract sources: `1`.
-- These are local results for the candidate only. No hosted CI result for the v0.1.2 commit, deployment, source parity, or live v0.1.2 transaction is claimed until separately verified.
+- GitHub Actions run [38435878608](https://github.com/Bibidee/polyglot/actions/runs/38435878608) for candidate commit `083e53487e9baa6ce413a39a456eaf21ea4e3f4f`: **completed successfully**.
+- The CI result verifies this exact code candidate only. It does not establish deployment, source parity, or live v0.1.2 transaction evidence.
 
 The v0.1.2 task API requires the publisher to specify `fallback_translator_bps` at nonpayable creation. The named translator accepts that share and the task terms before the publisher can fund. Then the publisher uses `deposit_credit()` and `fund_task()`. Unsubmitted tasks reaching `completion_by`, and unresolved submitted tasks reaching `review_deadline`, settle through that already accepted split. Both parties can still choose a different early split by mutual agreement. Evidence commitments remain immutable; 404/408/410/425/429, redirects, 5xx, network errors and model/provider failures are retryable. Hash/integrity issues enter `disputed` but remain reviewable with the same commitments during the recovery window. Finalized review calls are capped at 12, semantic assessments at 3, cooldown grows from 5 minutes to at most 6 hours, and both completion/review deadlines have deterministic settlement paths.
 
