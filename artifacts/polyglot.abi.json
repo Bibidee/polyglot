@@ -99,7 +99,11 @@
           "int"
         ],
         [
-          "fallback_translator_bps",
+          "non_submission_translator_bps",
+          "int"
+        ],
+        [
+          "unresolved_translator_bps",
           "int"
         ],
         [
