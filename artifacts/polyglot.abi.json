@@ -99,6 +99,10 @@
           "int"
         ],
         [
+          "fallback_translator_bps",
+          "int"
+        ],
+        [
           "accept_by",
           "int"
         ],

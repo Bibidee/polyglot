@@ -2,90 +2,83 @@
 
 ## Purpose and trust boundary
 
-Polyglot is a standalone GenLayer Intelligent Contract for escrow-backed semantic review of a translation. It binds source and translated notices (and optionally their images) to exact SHA-256 commitments, then asks independent validators to assess whether important meaning, rights, duties, dates, amounts, conditions, and exceptions survive translation.
+Polyglot is a standalone GenLayer Intelligent Contract for escrow-backed semantic review of a translation. It commits source and translated notices (and optional images) to exact SHA-256 values, then asks independent validators to evaluate whether important meaning, rights, duties, dates, amounts, conditions, exceptions, and scope survive translation.
 
-Hashes prove byte identity, not authorship or truth. Language and semantic judgments are not legal advice. Publisher, translator, external HTTPS hosts, GenLayer web access, and the LLM are all trust boundaries; only deterministic contract rules select amounts, recipients, and state transitions.
+Hashes prove byte identity, not authorship or truth. A publisher chooses the source URL and a proposed unresolved-task translator share; the named translator explicitly accepts those task terms before the publisher allocates escrow. Neither party can replace artifact commitments after task creation. Semantic review is not legal advice and external hosts, GenLayer web access, validators, and model providers remain trust boundaries.
 
 ## State machine
 
-| State | Meaning | Legal next states |
-|---|---|---|
-| `awaiting_funding` | Validated task terms recorded; no escrow yet. | `pending`, `cancelled` |
-| `pending` | Exact reward allocated to task. | `accepted`, `refund_dispatched` |
-| `accepted` | Named translator accepted. | `submitted`, `refund_dispatched` |
-| `submitted` | Translation commitment stored and review can begin. | `approved`, `rejected`, `inconclusive`, `retryable`, `disputed` |
-| `retryable` | Temporary observation/provider/consensus failure. | `approved`, `rejected`, `inconclusive`, `retryable`, `disputed` |
-| `inconclusive` | Valid semantic analysis cannot establish safe parity or definitive mismatch. | `approved`, `rejected`, `inconclusive`, `retryable`, `disputed` |
-| `approved` | Complete positive semantic tuple reached consensus. | `payout_dispatched` |
-| `rejected` | Definitive material translation defect reached consensus. | `refund_dispatched` |
-| `disputed` | Evidence integrity failed or review deadline elapsed; no safe automatic fault assignment. | `dispute_settled` only after exact mutual split agreement |
-| `payout_dispatched` | Transfer emitted to stored translator; child credit not implied. | Terminal |
-| `refund_dispatched` | Refund emitted to stored publisher; child credit not implied. | Terminal |
-| `dispute_settled` | Both participants approved the same split; transfers emitted. | Terminal |
-| `cancelled` | Unfunded prepared task cancelled. | Terminal |
+| State | Meaning | Legal next states and deadline behavior | Escrow |
+|---|---|---|---|
+| `awaiting_acceptance` | Valid nonpayable task terms recorded; translator has not accepted. | `awaiting_funding` on named translator acceptance before `accept_by`; `cancelled` by publisher or after acceptance deadline. | None |
+| `awaiting_funding` | Translator accepted all recorded terms, including fallback share; publisher has not allocated reward. | `pending` after exact publisher-owned credit allocation before `accept_by`; `cancelled` by publisher or after deadline. | None |
+| `pending` | Reward is funded, terms are accepted, and translation has not been submitted. | `submitted` by named translator before `completion_by`; `fallback_settled` at `completion_by`. | Full reward locked |
+| `submitted` | Immutable translation commitments recorded; semantic review can begin. | `approved`, `rejected`, `inconclusive`, `retryable`, or `disputed`; unresolved state can be reviewed until `review_deadline`, then `fallback_settled`. | Full reward locked |
+| `retryable` | Non-authorizing availability, model, or consensus failure. | Re-review same commitments after bounded cooldown; deadline -> `fallback_settled`. | Full reward locked |
+| `inconclusive` | Valid semantic assessment cannot establish approval or definitive rejection. | Re-review while semantic attempts and review-call budget remain; deadline -> `fallback_settled`. | Full reward locked |
+| `disputed` | A committed artifact failed integrity checks, or a participant proposed an early mutual split. This does not attribute fault. | Original immutable commitments may be re-reviewed after cooldown; mutual split can settle early; deadline -> `fallback_settled`. | Full reward locked |
+| `approved` | Complete positive semantic tuple reached consensus. | Permissionless `settle` -> `payout_dispatched`. | Full reward locked until dispatch |
+| `rejected` | Validators agree on the exact bounded material-defect classifications. | Permissionless `settle` -> `refund_dispatched`. | Full reward locked until dispatch |
+| `payout_dispatched` / `refund_dispatched` | Terminal transfer message emitted to the stored translator/publisher. | Terminal; no blind retry. | Liability cleared before dispatch |
+| `dispute_settled` | Both participants approved the same explicit early translator share. | Terminal; no blind retry. | Liability cleared before dispatch |
+| `fallback_settled` | Unsubmitted completion deadline or unresolved review deadline applied the immutable creation-time share the translator accepted before funding. | Terminal; no blind retry. | Liability cleared before dispatch |
+| `cancelled` | Unfunded task cancelled or expired before funding. | Terminal. | None |
+
+At `now == deadline`, the preceding stage is closed: a translation/review cannot be submitted at its cutoff, and permissionless timeout settlement is available. A finalized state is needed; an undetermined transaction does not change canonical task state.
+
+## Accepted fallback terms and incentive tradeoff
+
+At task creation the publisher specifies `fallback_translator_bps` in `[0,10000]`. The named translator must accept the task, including that percentage, before any publisher credit can be allocated. The accepted value is immutable in task storage; a different early split is possible only when both participants separately approve it through the mutual-resolution methods.
+
+At completion deadline, a funded task with no translation receives the creation-time split. At the review deadline, any unresolved submitted/retryable/inconclusive/disputed task receives the same split. The translator amount is floor(`deposited * bps / 10000`); the publisher receives the exact remainder, so intended transfers sum to the escrow exactly. This is a pre-agreed allocation of availability and timeout risk, not a model judgment or finding of fault. It prevents either party from holding funds forever and avoids an invented universal 50/50 rule. The publisher proposes the number; the translator may refuse before funding. The terms can still be unfair in a particular relationship, and the contract cannot know how much work was performed or who caused a host failure. Both parties must choose terms they knowingly accept.
+
+## Evidence recovery and bounded review
+
+The stored source and translation URL/hash pairs cannot be changed after task creation/submission. Each review re-fetches and verifies the original commitments. HTTP 404/408/410/425/429, redirects, 5xx responses, and fetch exceptions are operational unavailability and produce `retryable`; a 404 is not treated as proof of misconduct. Other HTTP rejections, invalid/empty/oversized bytes, invalid UTF-8, unsupported image signatures, or a hash mismatch produce a bounded `evidence_issue` that finalizes as `disputed`. `disputed` is still reviewable: if the original committed bytes become available again, semantic review can proceed without changing the hash. A mismatch is not automatically attributed to publisher or translator.
+
+Review operations have a 5-minute initial cooldown doubling per finalized call up to 6 hours, a total cap of 12 finalized review calls, a maximum of 3 valid semantic assessments, and the stored review deadline. Operational/evidence failures do not consume the semantic-assessment counter, but they do consume the bounded review-call budget. When the budget is exhausted, no more reviews are accepted; timeout settlement remains available at the deadline. This creates a finite number of attempts and a deterministic end state, not an indefinite retry loop.
+
+## Semantic result and validator equivalence
+
+Artifacts and the publisher brief are untrusted quoted data. The model must not follow instructions inside them. For each valid structured result, deterministic code derives `approved`, `rejected`, or `inconclusive`:
+
+- `approved`: languages match; meaning, rights/duties, dates/amounts/conditions, and exceptions are all preserved; no material term was added/omitted; `risk=no`; confidence >= 80.
+- `rejected`: at least one definitive bounded defect (`no` on a required match/preservation dimension, `yes` for added/omitted terms, or `yes` for discrepancy risk).
+- `inconclusive`: no definitive defect, but approval conditions are not all established.
+
+Validators must agree on result kind and outcome. Approvals independently satisfy the full safe tuple. Because rejection permits a publisher refund, rejections additionally require exact agreement across the bounded classification dimensions: source/target language, meaning, rights/duties, dates/amounts/conditions, exceptions, additions/omissions, and discrepancy risk. Rationale and differing confidence do not matter if the exact same bounded classifications still derive rejection. Different classifications fail equivalence rather than turning a disagreement into a refund. `inconclusive` and operational failures are non-authorizing; their differing diagnostics cannot create immediate payout. Evidence failures must agree on stage and reason.
+
+## Funding, accounting, and payment
+
+The liability invariant is:
+
+```text
+total_accounted_liabilities = total_available_credits + total_locked_task_escrow
+```
+
+`create_task` is nonpayable. `deposit_credit` is the only payable task-funding entry point and credits `gl.message.sender_address`, not a caller-supplied owner. `fund_task` is nonpayable and allocates exactly `reward_wei` from that publisher's credit after translator acceptance. Excess deposits remain owner credit. `withdraw_credit` can clear only the caller's credit. Cancellation before funding creates no transfer.
+
+For every task payout, refund, mutual split, or timeout split, the implementation reads from `task.deposited`, zeroes it, decrements `total_locked_task_escrow`, stores terminal status and the exact intended per-beneficiary amount, then invokes the one transfer helper. A second settlement finds no deposited amount and fails. The split remainder is assigned to the publisher, preventing rounding dust from remaining locked.
+
+`get_accounting()` returns `available + locked`, current contract balance, unallocated balance, balance shortfall, and solvency. A child transfer can fail after the parent's liability is cleared; in that case the actual balance may exceed the recorded liabilities and appear as `unallocated_balance`. There is no supported callback or safe on-chain retry in this implementation to re-credit one failed child. Operators must reconcile by parent transaction, exposed child transaction, `value_credited`, intended amount, and recipient balance; do not retry blindly. The authoritative platform behavior is described in the [GenLayer value-transfer docs](https://docs.genlayer.com/developers/intelligent-contracts/features/value-transfers) and [message docs](https://docs.genlayer.com/developers/intelligent-contracts/features/messages): sent value resides in the message until child activation, and failed children are not automatically refunded.
 
 ## Public method authorization
 
-| Method | Who can call | Value effect |
-|---|---|---|
-| `create_task` | Any publisher, task namespaced by actual sender | Nonpayable; records validated terms |
-| `deposit_credit` | Any account | Payable; adds credit only to actual sender |
-| `fund_task` | The task's publisher | Nonpayable; moves publisher credit to task escrow |
-| `withdraw_credit` | Credit owner (implicit caller) | Clears only caller's credit, then dispatches transfer |
-| `cancel_pending` | Stored publisher | Cancels unfunded task or refunds funded `pending` task before acceptance |
-| `accept_task` / `submit_translation` | Stored translator | Changes only its own task's workflow state |
-| `review` | Stored publisher or translator | Requests nondeterministic review; no direct money movement |
-| `settle` | Permissionless | Pays only fixed translator after `approved`, or publisher after `rejected` |
-| `timeout_refund` | Permissionless | Refunds only pre-submission timeout cases; unresolved post-submission review becomes `disputed` |
-| `propose_dispute_resolution` | Publisher or translator | Records proposed translator share in basis points |
-| `accept_dispute_resolution` | The other participant | Dispatches only if it accepts the exact proposed share |
-| `get_task`, `get_info`, `get_accounting`, `get_available_credit` | Public views | Read-only |
+| Method | Authorization and effect |
+|---|---|
+| `create_task` | Any publisher; task key uses actual sender; nonpayable; selects immutable proposed fallback share. |
+| `accept_task` | Only named translator; accepts terms before funding. |
+| `deposit_credit` | Any account; payable; credits only the actual sender. |
+| `fund_task` | Only task publisher; allocates exact reward after translator acceptance. |
+| `withdraw_credit` | Implicit caller; withdraws only caller's available credit. |
+| `cancel_pending` | Publisher; only while task has no allocated escrow. |
+| `submit_translation` | Named translator; commits fixed translation and optional image hashes. |
+| `review` | Publisher or translator; review-call/semantic limits and deadlines apply. |
+| `settle` | Permissionless; only `approved` pays fixed translator; only `rejected` refunds fixed publisher. |
+| `timeout_refund` | Permissionless; cancels expired unfunded tasks, applies accepted split at completion/review deadline. |
+| `propose_dispute_resolution` / `accept_dispute_resolution` | Either participant may propose in a disputed task; only the other can accept the exact share. |
+| `get_task`, `get_info`, `get_accounting`, `get_available_credit` | Public views. |
 
-Task identifiers are namespaced by publisher address. Address parameters used for reads/operations are normalized and task participant checks use stored addresses.
+## Limits
 
-## Funding and accounting invariant
-
-Task terms are created in nonpayable `create_task(...)`, which stores `reward_wei` and `awaiting_funding`. A separate minimal payable `deposit_credit()` records `gl.message.value` against the actual sender's address, without parsing task IDs, URLs, hashes, language tags, or other task input. The task publisher then calls nonpayable `fund_task(task_id)`, which moves exactly `reward_wei` from that publisher's available credit to the task's `deposited` ledger. Any excess remains the publisher's available credit.
-
-The explicit liability invariant is:
-
-```text
-accounted liabilities = total_available_credits + total_locked_task_escrow
-```
-
-Depositing increases available credit and liabilities by the same amount. Funding moves value between available and locked ledgers without changing total liabilities. Cancellation, refund, payout, or mutually agreed dispute settlement first zeroes the relevant user/task ledger and decrements aggregate liabilities, then emits the transfer. This prevents ordinary double withdrawal/settlement and prevents one publisher's credit from funding another publisher's task.
-
-`get_accounting()` compares recorded liabilities with `self.balance` at read time. Outgoing transfers are asynchronous child messages: the parent can finalize with a transfer dispatched while the child later fails or remains unresolved. The contract has no callback that safely restores a failed child amount, so it does not blindly retry. Operators must inspect the finalized child receipt and `value_credited`; a dispatched status alone is not a successful payment claim.
-
-The v0.1.0 deployment's invalid payable task-creation transaction is historical: it credited 0.001 GEN while task execution failed, leaving no old-version recovery record. v0.1.0 has no recovery method; v0.1.1 cannot recover value held by that separate address.
-
-## Evidence review and consensus
-
-Before nondeterministic execution, the contract copies task fields into a plain local snapshot. Leader and validators independently fetch the same committed source/translation bytes and optional image bytes. Text artifacts must be nonempty, within the byte bound, exact SHA-256 matches, and valid UTF-8. Images must be bounded, hash-matching PNG/JPEG/WebP signature data. The web client may follow redirects or resolve hostnames in ways this contract cannot constrain; `_host()` rejects malformed HTTPS and obvious local/IP-literal targets but is not DNS pinning or redirect protection.
-
-The model receives the untrusted source, translation, brief, and optional images with an instruction not to follow embedded instructions. The `risk` field means material risk introduced or concealed by a source/translation discrepancy; risk inherent in the source and faithfully preserved is not itself a translation defect. Output must match the exact bounded schema. Deterministic code derives approval only if every language/meaning/rights/duties/date/amount/condition/exception check is positive, additions/omissions and risk are negative, and confidence reaches the threshold. Rationale cannot affect authorization.
-
-Equivalence compares the bounded authorization outcome, not free-form rationale. Approval is equivalent only when both outputs independently derive the full approved tuple. Different safe rejection/uncertainty reasons may agree because neither authorizes translator payment. Approval-versus-nonapproval disagreement fails consensus. Failures with distinct operational details are both nonauthorizing; evidence-integrity results must agree on the same stage and reason to become a recorded dispute.
-
-## Failure policy and fairness
-
-| Observation | Result | Funds |
-|---|---|---|
-| Temporary fetch/network/provider/consensus failure | `retryable` | Remain escrowed; no payout/refund |
-| Malformed model output | `retryable` | Remain escrowed; no payout/refund |
-| Valid clear semantic mismatch | `rejected` | Publisher refund may be dispatched |
-| Valid ambiguous/uncertain assessment | `inconclusive` | Remain escrowed; may be reviewed again within limits |
-| Permanent source/translation/image integrity failure | `disputed` | Frozen; not automatically attributed to either party |
-| Submitted/retryable/inconclusive task passes review deadline | `disputed` | Frozen; no automatic timeout refund |
-
-Only publisher/translator may request review. A five-minute cooldown applies. `attempts` counts valid semantic assessments only (including `inconclusive`); transient failures, malformed output, or consensus execution failure do not consume the semantic attempt budget. Valid reviews are limited to three and the review deadline bounds the period.
-
-Disputed escrow moves only when one participant proposes a 0–10,000 basis-point translator share and the other participant accepts that exact value. The remainder goes to the publisher. This is a mutual settlement mechanism, not adjudication. If the parties never agree, escrow can remain locked indefinitely. A unilateral fallback would invent fault/economic outcomes not provable from available evidence, so this version deliberately does not provide one.
-
-## Images and prompt-injection limits
-
-Images are optional corroborating visual evidence, not guaranteed OCR or legal interpretation. Direct Mode tests use complete small PNG bytes and mock the model response; they do not prove deployed provider vision behavior. Artifact text/images can still probabilistically influence a model despite explicit prompt boundaries. Hashing preserves submitted bytes but cannot make them benign.
-
-## Current verification boundary
-
-The working candidate v0.1.1 locally passes 80 Direct Mode tests, GenVM lint, generated ABI comparison, and preflight. The unchanged v0.1.0 Studionet address and live evidence remain historical and do not verify candidate behavior. No v0.1.1 deployment, deployed-source parity, live dispute behavior, live image review, or hosted CI for the remediation branch is claimed.
+URL checks reject malformed HTTPS, credentials, nonstandard ports, local suffixes, and IP literals; they cannot guarantee DNS resolution, redirect behavior, or publisher control. Hashes do not prove source authenticity. Model output may be malformed or uncertain. Validator consensus may disagree or remain undetermined. Visual review is not certified OCR. No escrow result is legal advice. Child transfer state is dispatch status, not guaranteed credit.

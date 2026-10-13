@@ -1,4 +1,4 @@
-# v0.1.1
+# v0.1.2
 # { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 """Polyglot: semantic notice-parity review with bounded GEN escrow.
 
@@ -30,12 +30,12 @@ from urllib.parse import urlsplit
 from genlayer import Address, TreeMap, allow_storage, gl, u16, u256
 
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 
 PENDING = "pending"
+AWAITING_ACCEPTANCE = "awaiting_acceptance"
 AWAITING_FUNDING = "awaiting_funding"
 CANCELLED = "cancelled"
-ACCEPTED = "accepted"
 SUBMITTED = "submitted"
 RETRYABLE = "retryable"
 INCONCLUSIVE = "inconclusive"
@@ -45,6 +45,7 @@ PAYOUT_DISPATCHED = "payout_dispatched"
 REFUND_DISPATCHED = "refund_dispatched"
 DISPUTED = "disputed"
 DISPUTE_SETTLED = "dispute_settled"
+FALLBACK_SETTLED = "fallback_settled"
 
 MIN_ESCROW_WEI = 10**15
 MAX_ID = 64
@@ -56,7 +57,9 @@ MAX_TEXT_BYTES = 20_000
 MAX_IMAGE_BYTES = 1_500_000
 MIN_CONFIDENCE = 80
 MAX_ATTEMPTS = 3
+MAX_REVIEW_CALLS = 12
 RETRY_COOLDOWN = 5 * 60
+MAX_RETRY_COOLDOWN = 6 * 60 * 60
 MIN_ACCEPT_WINDOW = 60 * 60
 MAX_ACCEPT_WINDOW = 14 * 24 * 60 * 60
 MIN_COMPLETION_WINDOW = 60 * 60
@@ -111,6 +114,10 @@ class TranslationTask:
     settlement: str
     resolution_payout_bps: u16
     resolution_by: str
+    fallback_translator_bps: u16
+    review_calls: u16
+    publisher_dispatched_amount: u256
+    translator_dispatched_amount: u256
 
 
 @gl.evm.contract_interface
@@ -217,7 +224,10 @@ def _fetch(url: str, expected_hash: str, limit: int, image: bool = False) -> byt
         status = getattr(response, "status_code", None)
     if not isinstance(status, int) or isinstance(status, bool):
         raise ValueError("source_unavailable")
-    if status == 429 or status >= 500 or 300 <= status < 400:
+    # A missing object is not proof that its committed bytes were corrupted.
+    # Availability may recover, so 404/410 and other service failures remain
+    # retryable within the task's bounded review window.
+    if status in (404, 408, 410, 425, 429) or status >= 500 or 300 <= status < 400:
         raise ValueError("source_unavailable")
     if status < 200 or status >= 300:
         raise ValueError("source_rejected")
@@ -344,8 +354,34 @@ def _equivalent(left, right) -> bool:
         # An approval necessarily means every bounded critical field independently
         # met the complete safe tuple. Rationale and exact confidence are metadata.
         return _decision(left["analysis"]) == _decision(right["analysis"]) == APPROVED
-    # Distinct rejection reasons or uncertainty details cannot release escrow.
+    if left["outcome"] == REJECTED:
+        # Rejection authorizes a publisher refund. Require agreement on every
+        # bounded semantic axis that can establish a defect, but not prose.
+        return _critical_signature(left["analysis"]) == _critical_signature(right["analysis"])
+    # Uncertainty is non-authorizing and resolves only through the split both
+    # parties accepted before escrow allocation.
     return left["outcome"] in {REJECTED, INCONCLUSIVE}
+
+
+def _critical_signature(analysis: dict) -> tuple:
+    return tuple(
+        analysis[field]
+        for field in (
+            "source_language_match",
+            "translation_language_match",
+            "material_meaning_preserved",
+            "rights_and_duties_preserved",
+            "dates_amounts_conditions_preserved",
+            "exceptions_preserved",
+            "material_terms_added_or_omitted",
+            "risk",
+        )
+    )
+
+
+def _retry_delay(review_calls: int) -> int:
+    exponent = max(0, min(int(review_calls) - 1, 7))
+    return min(RETRY_COOLDOWN * (2 ** exponent), MAX_RETRY_COOLDOWN)
 
 
 def _prompt(snapshot: dict, source_text: str, translated_text: str) -> str:
@@ -433,6 +469,7 @@ def _canonical_snapshot(task: TranslationTask) -> dict:
         "translation_hash": str(task.translation_hash),
         "translation_image_url": str(task.translation_image_url),
         "translation_image_hash": str(task.translation_image_hash),
+        "fallback_translator_bps": int(task.fallback_translator_bps),
     }
 
 
@@ -469,6 +506,7 @@ class Polyglot(gl.Contract):
         source_image_hash_text: str,
         brief_text: str,
         reward_wei: u256,
+        fallback_translator_bps: u16,
         accept_by: u256,
         completion_by: u256,
     ) -> str:
@@ -494,6 +532,9 @@ class Polyglot(gl.Contract):
         reward = int(reward_wei)
         if reward < MIN_ESCROW_WEI:
             raise gl.vm.UserError("[EXPECTED] Escrow below minimum")
+        fallback_share = int(fallback_translator_bps)
+        if fallback_share > 10_000:
+            raise gl.vm.UserError("[EXPECTED] Invalid unresolved-task translator share")
         now = _now()
         accept_cutoff = int(accept_by)
         completion_cutoff = int(completion_by)
@@ -523,7 +564,7 @@ class Polyglot(gl.Contract):
             translation_hash="",
             translation_image_url="",
             translation_image_hash="",
-            status=AWAITING_FUNDING,
+            status=AWAITING_ACCEPTANCE,
             confidence=u16(0),
             rationale="",
             reason="",
@@ -535,6 +576,10 @@ class Polyglot(gl.Contract):
             settlement="",
             resolution_payout_bps=u16(0),
             resolution_by="",
+            fallback_translator_bps=u16(fallback_share),
+            review_calls=u16(0),
+            publisher_dispatched_amount=u256(0),
+            translator_dispatched_amount=u256(0),
         )
         return key
 
@@ -560,7 +605,7 @@ class Polyglot(gl.Contract):
         task = self.tasks.get(self._key(publisher, task_id))
         if task is None:
             raise gl.vm.UserError("[EXPECTED] Translation task not found")
-        if task.status != AWAITING_FUNDING:
+        if task.status != AWAITING_FUNDING or _now() >= int(task.accept_by):
             raise gl.vm.UserError("[EXPECTED] Task is not awaiting funding")
         key = publisher.as_hex.lower()
         credit = self.available_credits.get(key)
@@ -612,22 +657,20 @@ class Polyglot(gl.Contract):
     def cancel_pending(self, publisher_text: str, task_id: str) -> None:
         task = self._find(publisher_text, task_id)
         if gl.message.sender_address != task.publisher:
-            raise gl.vm.UserError("[EXPECTED] Only publisher may cancel a pending task")
-        if task.status == AWAITING_FUNDING and int(task.deposited) == 0:
+            raise gl.vm.UserError("[EXPECTED] Only publisher may cancel an unfunded task")
+        if task.status in (AWAITING_ACCEPTANCE, AWAITING_FUNDING) and int(task.deposited) == 0:
             task.status = CANCELLED
             task.settlement = "unfunded_task_cancelled"
             return
-        if task.status != PENDING:
-            raise gl.vm.UserError("[EXPECTED] Only an unfunded or pending task may be cancelled")
-        self._refund(task, "publisher_cancelled")
+        raise gl.vm.UserError("[EXPECTED] Funded or accepted task cannot be unilaterally cancelled")
 
     @gl.public.write
     def accept_task(self, publisher_text: str, task_id: str) -> None:
         task = self._find(publisher_text, task_id)
-        if (task.status != PENDING or gl.message.sender_address != task.translator
+        if (task.status != AWAITING_ACCEPTANCE or gl.message.sender_address != task.translator
                 or _now() >= int(task.accept_by)):
             raise gl.vm.UserError("[EXPECTED] Translator cannot accept this task")
-        task.status = ACCEPTED
+        task.status = AWAITING_FUNDING
 
     @gl.public.write
     def submit_translation(
@@ -640,7 +683,7 @@ class Polyglot(gl.Contract):
         translation_image_hash_text: str,
     ) -> None:
         task = self._find(publisher_text, task_id)
-        if (task.status != ACCEPTED or gl.message.sender_address != task.translator
+        if (task.status != PENDING or gl.message.sender_address != task.translator
                 or _now() >= int(task.completion_by)):
             raise gl.vm.UserError("[EXPECTED] Translator cannot submit this task")
         translation_url = _host(translation_url_text)
@@ -665,7 +708,7 @@ class Polyglot(gl.Contract):
         sender = gl.message.sender_address
         if sender != task.publisher and sender != task.translator:
             raise gl.vm.UserError("[EXPECTED] Only task participants may request review")
-        if task.status not in (SUBMITTED, RETRYABLE, INCONCLUSIVE):
+        if task.status not in (SUBMITTED, RETRYABLE, INCONCLUSIVE, DISPUTED):
             raise gl.vm.UserError("[EXPECTED] Task is not reviewable")
         if now >= int(task.review_deadline):
             raise gl.vm.UserError("[EXPECTED] Review deadline elapsed")
@@ -673,6 +716,8 @@ class Polyglot(gl.Contract):
             raise gl.vm.UserError("[EXPECTED] Review cooldown is active")
         if int(task.attempts) >= MAX_ATTEMPTS:
             raise gl.vm.UserError("[EXPECTED] Review attempt limit reached")
+        if int(task.review_calls) >= MAX_REVIEW_CALLS:
+            raise gl.vm.UserError("[EXPECTED] Review call limit reached")
         snapshot = _canonical_snapshot(task)
 
         def leader_fn():
@@ -689,31 +734,33 @@ class Polyglot(gl.Contract):
         try:
             result = gl.vm.run_nondet_unsafe(leader_fn, validator_fn)
         except Exception:
+            task.review_calls = u16(int(task.review_calls) + 1)
             task.status = RETRYABLE
             task.reason = "consensus_execution_failure"
-            task.retry_at = u256(now + RETRY_COOLDOWN)
+            task.retry_at = u256(now + _retry_delay(int(task.review_calls)))
             return
+        task.review_calls = u16(int(task.review_calls) + 1)
         if not _valid_result(result):
             task.status = RETRYABLE
             task.reason = "invalid_consensus_result"
-            task.retry_at = u256(now + RETRY_COOLDOWN)
+            task.retry_at = u256(now + _retry_delay(int(task.review_calls)))
             return
         if result["kind"] == "failure":
             task.status = RETRYABLE
             task.reason = str(result["reason"])[:64]
-            task.retry_at = u256(now + RETRY_COOLDOWN)
+            task.retry_at = u256(now + _retry_delay(int(task.review_calls)))
             return
         if result["kind"] == "evidence_issue":
             task.status = DISPUTED
             task.reason = str(result["stage"] + ":" + result["reason"])[:64]
-            task.retry_at = u256(0)
+            task.retry_at = u256(now + _retry_delay(int(task.review_calls)))
             return
         analysis = result["analysis"]
         task.attempts = u16(int(task.attempts) + 1)
         task.confidence = u16(analysis["confidence"])
         task.rationale = analysis["rationale"]
         task.reason = ""
-        task.retry_at = u256(now + RETRY_COOLDOWN)
+        task.retry_at = u256(now + _retry_delay(int(task.review_calls)))
         if result["outcome"] == APPROVED:
             task.status = APPROVED
         elif result["outcome"] == REJECTED:
@@ -741,6 +788,8 @@ class Polyglot(gl.Contract):
         task.deposited = u256(0)
         self.total_locked_task_escrow = u256(int(self.total_locked_task_escrow) - int(amount))
         task.dispatched_amount = amount
+        task.translator_dispatched_amount = amount if terminal == PAYOUT_DISPATCHED else u256(0)
+        task.publisher_dispatched_amount = amount if terminal == REFUND_DISPATCHED else u256(0)
         task.settlement = settlement
         task.status = terminal
         _send_gen(recipient, amount)
@@ -780,6 +829,8 @@ class Polyglot(gl.Contract):
         task.deposited = u256(0)
         self.total_locked_task_escrow = u256(int(self.total_locked_task_escrow) - amount)
         task.dispatched_amount = u256(amount)
+        task.translator_dispatched_amount = u256(translator_amount)
+        task.publisher_dispatched_amount = u256(publisher_amount)
         task.settlement = "mutual_dispute_resolution_dispatched"
         task.status = DISPUTE_SETTLED
         if translator_amount > 0:
@@ -791,32 +842,37 @@ class Polyglot(gl.Contract):
     def timeout_refund(self, publisher_text: str, task_id: str) -> None:
         task = self._find(publisher_text, task_id)
         now = _now()
-        if task.status == PENDING and now >= int(task.accept_by):
-            self._refund(task, "publisher_timeout_refund_dispatched")
+        if task.status in (AWAITING_ACCEPTANCE, AWAITING_FUNDING) and now >= int(task.accept_by):
+            task.status = CANCELLED
+            task.settlement = "unaccepted_or_unfunded_task_expired"
             return
-        if task.status == ACCEPTED and now >= int(task.completion_by):
-            self._refund(task, "publisher_timeout_refund_dispatched")
+        if task.status == PENDING and now >= int(task.completion_by):
+            self._settle_fallback(task)
             return
-        if (task.status in (SUBMITTED, RETRYABLE, INCONCLUSIVE)
+        if (task.status in (SUBMITTED, RETRYABLE, INCONCLUSIVE, DISPUTED)
                 and now >= int(task.review_deadline)):
-            task.status = DISPUTED
-            task.reason = "review_deadline_unresolved"
-            task.retry_at = u256(0)
-            task.settlement = "mutual_resolution_required"
+            self._settle_fallback(task)
             return
         else:
             raise gl.vm.UserError("[EXPECTED] Task timeout has not elapsed")
 
-    def _refund(self, task: TranslationTask, reason: str) -> None:
-        amount = task.deposited
-        if int(amount) <= 0:
+    def _settle_fallback(self, task: TranslationTask) -> None:
+        amount = int(task.deposited)
+        if amount <= 0:
             raise gl.vm.UserError("[EXPECTED] Escrow already dispatched")
+        translator_amount = amount * int(task.fallback_translator_bps) // 10_000
+        publisher_amount = amount - translator_amount
         task.deposited = u256(0)
-        self.total_locked_task_escrow = u256(int(self.total_locked_task_escrow) - int(amount))
-        task.dispatched_amount = amount
-        task.settlement = reason
-        task.status = REFUND_DISPATCHED
-        _send_gen(task.publisher, amount)
+        self.total_locked_task_escrow = u256(int(self.total_locked_task_escrow) - amount)
+        task.dispatched_amount = u256(amount)
+        task.translator_dispatched_amount = u256(translator_amount)
+        task.publisher_dispatched_amount = u256(publisher_amount)
+        task.settlement = "preagreed_deadline_split_dispatched"
+        task.status = FALLBACK_SETTLED
+        if translator_amount > 0:
+            _send_gen(task.translator, u256(translator_amount))
+        if publisher_amount > 0:
+            _send_gen(task.publisher, u256(publisher_amount))
 
     @gl.public.view
     def get_task(self, publisher_text: str, task_id: str) -> dict:
@@ -852,6 +908,10 @@ class Polyglot(gl.Contract):
             "settlement": task.settlement,
             "resolution_payout_bps": int(task.resolution_payout_bps),
             "resolution_by": task.resolution_by,
+            "fallback_translator_bps": int(task.fallback_translator_bps),
+            "review_calls": int(task.review_calls),
+            "publisher_dispatched_amount": int(task.publisher_dispatched_amount),
+            "translator_dispatched_amount": int(task.translator_dispatched_amount),
         }
 
     @gl.public.view
@@ -862,12 +922,15 @@ class Polyglot(gl.Contract):
             "min_escrow_wei": MIN_ESCROW_WEI,
             "minimum_confidence": MIN_CONFIDENCE,
             "max_review_attempts": MAX_ATTEMPTS,
+            "max_review_calls": MAX_REVIEW_CALLS,
             "attempts_count_only_consensus_semantic_reviews": True,
             "review_window_seconds": REVIEW_WINDOW,
             "retry_cooldown_seconds": RETRY_COOLDOWN,
+            "max_retry_cooldown_seconds": MAX_RETRY_COOLDOWN,
             "image_evidence": "optional_hash_bound_png_jpeg_webp_source_and_translation",
             "transfer_semantics": "dispatch_is_not_child_transfer_credit",
             "funding_model": "payable_deposit_to_sender_credit_then_nonpayable_task_allocation",
             "accounting_model": "available_credit_plus_locked_task_escrow; outgoing_child_status_requires_external_reconciliation",
-            "evidence_failure_policy": "publisher_or_translator_evidence_integrity_failure_disputes_and_freezes_escrow; post_submission_timeout_never_auto_refunds",
+            "evidence_failure_policy": "immutable_evidence_issues_remain_reviewable_with_cooldown_until_review_deadline; unresolved funded tasks use creation-time fallback split accepted by translator before funding",
+            "unresolved_settlement_policy": "publisher sets translator basis-point share at task creation; named translator accepts before funding; no later unilateral change",
         }
