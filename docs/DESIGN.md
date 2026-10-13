@@ -2,7 +2,7 @@
 
 ## Purpose and trust boundary
 
-Polyglot is a standalone GenLayer Intelligent Contract for escrow-backed semantic review of a translation. It commits source and translated notices (and optional images) to exact SHA-256 values, then asks independent validators to evaluate whether important meaning, rights, duties, dates, amounts, conditions, exceptions, and scope survive translation.
+Polyglot v0.1.3 is a standalone GenLayer Intelligent Contract for escrow-backed semantic review of a translation. It commits source and translated notices (and optional images) to exact SHA-256 values, then asks independent validators to evaluate whether important meaning, rights, duties, dates, amounts, conditions, exceptions, and scope survive translation.
 
 Hashes prove byte identity, not authorship or truth. A publisher chooses the source URL and a proposed unresolved-task translator share; the named translator explicitly accepts those task terms before the publisher allocates escrow. Neither party can replace artifact commitments after task creation. Semantic review is not legal advice and external hosts, GenLayer web access, validators, and model providers remain trust boundaries.
 
@@ -10,10 +10,10 @@ Hashes prove byte identity, not authorship or truth. A publisher chooses the sou
 
 | State | Meaning | Legal next states and deadline behavior | Escrow |
 |---|---|---|---|
-| `awaiting_acceptance` | Valid nonpayable task terms recorded; translator has not accepted. | `awaiting_funding` on named translator acceptance before `accept_by`; `cancelled` by publisher or after acceptance deadline. | None |
-| `awaiting_funding` | Translator accepted all recorded terms, including fallback share; publisher has not allocated reward. | `pending` after exact publisher-owned credit allocation before `accept_by`; `cancelled` by publisher or after deadline. | None |
-| `pending` | Reward is funded, terms are accepted, and translation has not been submitted. | `submitted` by named translator before `completion_by`; `fallback_settled` at `completion_by`. | Full reward locked |
-| `submitted` | Immutable translation commitments recorded; semantic review can begin. | `approved`, `rejected`, `inconclusive`, `retryable`, or `disputed`; unresolved state can be reviewed until `review_deadline`, then `fallback_settled`. | Full reward locked |
+| `awaiting_acceptance` | Valid nonpayable task terms recorded, including two fallback shares; translator has not accepted. | `awaiting_funding` on named translator acceptance before `accept_by`; `cancelled` by publisher or after acceptance deadline. | None |
+| `awaiting_funding` | Translator accepted all recorded terms, including both fallback shares; publisher has not allocated reward. | `pending` after exact publisher-owned credit allocation before `accept_by`; `cancelled` by publisher or after deadline. | None |
+| `pending` | Reward is funded, terms are accepted, and translation has not been submitted. | `submitted` by named translator before `completion_by`; `fallback_settled` at `completion_by` using the non-submission share. | Full reward locked |
+| `submitted` | Immutable translation commitments recorded; semantic review can begin. | `approved`, `rejected`, `inconclusive`, `retryable`, or `disputed`; unresolved state can be reviewed until `review_deadline`, then `fallback_settled` using the unresolved-review share. | Full reward locked |
 | `retryable` | Non-authorizing availability, model, or consensus failure. | Re-review same commitments after bounded cooldown; deadline -> `fallback_settled`. | Full reward locked |
 | `inconclusive` | Valid semantic assessment cannot establish approval or definitive rejection. | Re-review while semantic attempts and review-call budget remain; deadline -> `fallback_settled`. | Full reward locked |
 | `disputed` | A committed artifact failed integrity checks, or a participant proposed an early mutual split. This does not attribute fault. | Original immutable commitments may be re-reviewed after cooldown; mutual split can settle early; deadline -> `fallback_settled`. | Full reward locked |
@@ -21,32 +21,32 @@ Hashes prove byte identity, not authorship or truth. A publisher chooses the sou
 | `rejected` | Validators agree on the exact bounded material-defect classifications. | Permissionless `settle` -> `refund_dispatched`. | Full reward locked until dispatch |
 | `payout_dispatched` / `refund_dispatched` | Terminal transfer message emitted to the stored translator/publisher. | Terminal; no blind retry. | Liability cleared before dispatch |
 | `dispute_settled` | Both participants approved the same explicit early translator share. | Terminal; no blind retry. | Liability cleared before dispatch |
-| `fallback_settled` | Unsubmitted completion deadline or unresolved review deadline applied the immutable creation-time share the translator accepted before funding. | Terminal; no blind retry. | Liability cleared before dispatch |
+| `fallback_settled` | The unsubmitted completion deadline applied the non-submission share, or the unresolved submitted review deadline applied the unresolved-review share. Both were accepted before funding. | Terminal; no blind retry. | Liability cleared before dispatch |
 | `cancelled` | Unfunded task cancelled or expired before funding. | Terminal. | None |
 
 At `now == deadline`, the preceding stage is closed: a translation/review cannot be submitted at its cutoff, and permissionless timeout settlement is available. A finalized state is needed; an undetermined transaction does not change canonical task state.
 
 ## Accepted fallback terms and incentive tradeoff
 
-At task creation the publisher specifies `fallback_translator_bps` in `[0,10000]`. The named translator must accept the task, including that percentage, before any publisher credit can be allocated. The accepted value is immutable in task storage; a different early split is possible only when both participants separately approve it through the mutual-resolution methods.
+At task creation the publisher specifies two values in `[0,10000]`: `non_submission_translator_bps`, applying only when no translation is submitted before `completion_by`, and `unresolved_translator_bps`, applying only when a translation was submitted but review remains unresolved at `review_deadline`. The named translator must accept both exact values before any publisher credit can be allocated. They are immutable in task storage; a different early split is possible only when both participants separately approve it through the mutual-resolution methods.
 
-At completion deadline, a funded task with no translation receives the creation-time split. At the review deadline, any unresolved submitted/retryable/inconclusive/disputed task receives the same split. The translator amount is floor(`deposited * bps / 10000`); the publisher receives the exact remainder, so intended transfers sum to the escrow exactly. This is a pre-agreed allocation of availability and timeout risk, not a model judgment or finding of fault. It prevents either party from holding funds forever and avoids an invented universal 50/50 rule. The publisher proposes the number; the translator may refuse before funding. The terms can still be unfair in a particular relationship, and the contract cannot know how much work was performed or who caused a host failure. Both parties must choose terms they knowingly accept.
+At completion deadline, a funded task with no translation receives only the non-submission share. At the review deadline, an unresolved submitted/retryable/inconclusive/disputed task receives only the unresolved-review share. The translator amount is floor(`deposited * applicable_bps / 10000`); the publisher receives the exact remainder, so intended transfers sum to the escrow exactly. This is a pre-agreed allocation of distinct availability and timeout risks, not a model judgment or finding of fault. Separating the terms avoids automatically granting the same compensation for non-submission and unresolved evaluation, while avoiding an invented universal percentage. The publisher proposes both numbers; the translator may refuse before funding. The terms can still be unfair in a particular relationship, and the contract cannot know how much work was performed or who caused a host failure. Both parties must choose terms they knowingly accept.
 
 ## Evidence recovery and bounded review
 
 The stored source and translation URL/hash pairs cannot be changed after task creation/submission. Each review re-fetches and verifies the original commitments. HTTP 404/408/410/425/429, redirects, 5xx responses, and fetch exceptions are operational unavailability and produce `retryable`; a 404 is not treated as proof of misconduct. Other HTTP rejections, invalid/empty/oversized bytes, invalid UTF-8, unsupported image signatures, or a hash mismatch produce a bounded `evidence_issue` that finalizes as `disputed`. `disputed` is still reviewable: if the original committed bytes become available again, semantic review can proceed without changing the hash. A mismatch is not automatically attributed to publisher or translator.
 
-Review operations have a 5-minute initial cooldown doubling per finalized call up to 6 hours, a total cap of 12 finalized review calls, a maximum of 3 valid semantic assessments, and the stored review deadline. Operational/evidence failures do not consume the semantic-assessment counter, but they do consume the bounded review-call budget. When the budget is exhausted, no more reviews are accepted; timeout settlement remains available at the deadline. This creates a finite number of attempts and a deterministic end state, not an indefinite retry loop.
+Review operations have a 5-minute initial cooldown doubling per call up to 6 hours, the stored review deadline, and a finite budget: at most 12 ordinary finalized calls plus one reserved recovery call. There are at most 3 ordinary valid semantic assessments plus one reserved assessment. Operational/evidence failures do not consume the semantic-assessment counter, but consume ordinary call capacity. Once the ordinary-call or semantic-assessment limit is reached, exactly one reserved call may be used if its cooldown has elapsed and the deadline has not; the reserve is never replenished. This allows restored immutable evidence to be checked after ordinary capacity is exhausted, including at the last reviewable second, without an unlimited free retry path. If the reserve is unavailable or also fails, timeout settlement remains available at the deadline under the accepted unresolved-review share.
 
 ## Semantic result and validator equivalence
 
 Artifacts and the publisher brief are untrusted quoted data. The model must not follow instructions inside them. For each valid structured result, deterministic code derives `approved`, `rejected`, or `inconclusive`:
 
 - `approved`: languages match; meaning, rights/duties, dates/amounts/conditions, and exceptions are all preserved; no material term was added/omitted; `risk=no`; confidence >= 80.
-- `rejected`: at least one definitive bounded defect (`no` on a required match/preservation dimension, `yes` for added/omitted terms, or `yes` for discrepancy risk).
-- `inconclusive`: no definitive defect, but approval conditions are not all established.
+- `rejected`: confidence is at least 80 and at least one definitive bounded defect exists (`no` on a required match/preservation dimension, `yes` for added/omitted terms, or `yes` for discrepancy risk).
+- `inconclusive`: confidence is below 80, or no definitive defect exists but approval conditions are not all established. This result cannot directly authorize a refund or payout; only the separately pre-agreed unresolved-review deadline allocation can later settle an unresolved escrow.
 
-Validators must agree on result kind and outcome. Approvals independently satisfy the full safe tuple. Because rejection permits a publisher refund, rejections additionally require exact agreement across the bounded classification dimensions: source/target language, meaning, rights/duties, dates/amounts/conditions, exceptions, additions/omissions, and discrepancy risk. Rationale and differing confidence do not matter if the exact same bounded classifications still derive rejection. Different classifications fail equivalence rather than turning a disagreement into a refund. `inconclusive` and operational failures are non-authorizing; their differing diagnostics cannot create immediate payout. Evidence failures must agree on stage and reason.
+Validators must agree on result kind and outcome. Each approval independently satisfies the full safe tuple, including confidence >=80. Because rejection permits a publisher refund, each rejection independently requires confidence >=80 and rejections additionally require exact agreement across the bounded classification dimensions: source/target language, meaning, rights/duties, dates/amounts/conditions, exceptions, additions/omissions, and discrepancy risk. Rationale and differing confidence do not matter if both confidences meet the threshold and the exact same bounded classifications derive rejection. Different classifications fail equivalence rather than turning disagreement into a refund. Low-confidence classifications become `inconclusive`, not a rejection. `inconclusive` and operational failures are non-authorizing; their differing diagnostics cannot create immediate payout. Evidence failures must agree on stage and reason.
 
 ## Funding, accounting, and payment
 
@@ -66,7 +66,7 @@ For every task payout, refund, mutual split, or timeout split, the implementatio
 
 | Method | Authorization and effect |
 |---|---|
-| `create_task` | Any publisher; task key uses actual sender; nonpayable; selects immutable proposed fallback share. |
+| `create_task` | Any publisher; task key uses actual sender; nonpayable; selects immutable proposed non-submission and unresolved-review shares. |
 | `accept_task` | Only named translator; accepts terms before funding. |
 | `deposit_credit` | Any account; payable; credits only the actual sender. |
 | `fund_task` | Only task publisher; allocates exact reward after translator acceptance. |
