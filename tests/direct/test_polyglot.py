@@ -758,6 +758,42 @@ def test_hash_mismatch_can_recover_only_when_original_committed_bytes_return(
     assert (recovered["source_hash"], recovered["translation_hash"]) == immutable
 
 
+def test_invalid_translation_bytes_remain_disputed_until_preaccepted_unresolved_fallback(
+    direct_vm, direct_deploy, direct_alice, direct_bob, direct_charlie
+):
+    contract = deploy(direct_vm, direct_deploy)
+    create_task(contract, direct_vm, direct_alice, direct_bob)
+    accept_and_submit(contract, direct_vm, direct_alice, direct_bob)
+    direct_vm.mock_web(SOURCE_URL, {"status": 200, "body": SOURCE})
+    direct_vm.mock_web(TRANSLATION_URL, {"status": 200, "body": TRANSLATION + b" substituted"})
+
+    review(contract, direct_vm, direct_alice)
+    disputed = contract.get_task(addr(direct_alice), "PG-001")
+    assert disputed["status"] == "disputed"
+    assert disputed["reason"] == "translation:hash_mismatch"
+    assert disputed["deposited"] == DEPOSIT
+    assert disputed["settlement"] == ""
+
+    # Invalid committed evidence does not by itself prove which party caused the
+    # problem. Only the separately accepted post-submission deadline allocation
+    # can settle this unresolved task.
+    direct_vm.sender = direct_charlie
+    direct_vm.warp(at(disputed["review_deadline"]))
+    contract.timeout_refund(addr(direct_alice), "PG-001")
+    settled = contract.get_task(addr(direct_alice), "PG-001")
+    translator_amount = DEPOSIT * TEST_UNRESOLVED_TRANSLATOR_BPS // 10_000
+    assert settled["status"] == "fallback_settled"
+    assert settled["settlement"] == "preagreed_unresolved_review_split_dispatched"
+    assert settled["deposited"] == 0
+    assert settled["dispatched_amount"] == DEPOSIT
+    assert settled["translator_dispatched_amount"] == translator_amount
+    assert settled["publisher_dispatched_amount"] == DEPOSIT - translator_amount
+    assert settled["translator_dispatched_amount"] + settled["publisher_dispatched_amount"] == DEPOSIT
+    assert contract.get_accounting()["total_locked_task_escrow"] == 0
+    with direct_vm.expect_revert():
+        contract.timeout_refund(addr(direct_alice), "PG-001")
+
+
 @pytest.mark.parametrize("failure", [
     "provider_failure",
     "source_404",
@@ -812,6 +848,16 @@ def test_reserved_recovery_review_after_twelve_failures_can_adjudicate_restored_
     unchanged = contract.get_task(addr(direct_alice), "PG-001")
     assert unchanged["review_calls"] == 12
     assert unchanged["recovery_review_calls"] == 0
+
+    # An authorized review before the cooldown expires cannot burn the one
+    # reserved recovery call.
+    direct_vm.sender = direct_alice
+    direct_vm.warp(at(exhausted["retry_at"] - 1))
+    with direct_vm.expect_revert():
+        contract.review(addr(direct_alice), "PG-001")
+    before_reserve = contract.get_task(addr(direct_alice), "PG-001")
+    assert before_reserve["review_calls"] == 12
+    assert before_reserve["recovery_review_calls"] == 0
 
     # The final reserved attempt is usable at the last reviewable second.
     direct_vm.warp(at(exhausted["review_deadline"] - 1))
