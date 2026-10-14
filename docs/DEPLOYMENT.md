@@ -1,20 +1,65 @@
 # Polyglot deployment and live verification
 
-## Current Studionet deployment
+## Current Studionet deployment — v0.1.3
 
 - Network: GenLayer Studionet, chain ID `61999`
-- Contract: [`0x1E0239EBd297b29339Ec4cA767388C79EACc9078`](https://explorer-studio.genlayer.com/address/0x1E0239EBd297b29339Ec4cA767388C79EACc9078)
-- Deployment transaction: [`0xe1762be0c9fed246e0fef5644112f8ad9ed0e03d727c57225ce40f5680f81ffb`](https://explorer-studio.genlayer.com/tx/0xe1762be0c9fed246e0fef5644112f8ad9ed0e03d727c57225ce40f5680f81ffb)
-- Version: `0.1.0`
-- Frozen source commit: `9e49bb1f4b6f39655690599d9e0f38a8af30ea6d`
-- Contract SHA-256: `498762a5c8b3426f21eb8499ee793e97d77d81a1b437430efb5378f85c3ba1d9`
-- Source parity: **verified byte-for-byte** via GenLayerJS `getContractCode()` backed by `gen_getContractCode`; both local and deployed source were 28,671 bytes with the same SHA-256.
+- Contract: [`0x7B68e7E83BcBF6290c2Ef2C78663059ae0D131F8`](https://explorer-studio.genlayer.com/address/0x7B68e7E83BcBF6290c2Ef2C78663059ae0D131F8)
+- Deployment transaction: [`0x8e580d0c2fd418c62bd2f0c8b5f0246b1c7b297a3348049cee2911530fea23e0`](https://explorer-studio.genlayer.com/tx/0x8e580d0c2fd418c62bd2f0c8b5f0246b1c7b297a3348049cee2911530fea23e0)
+- Version: `0.1.3`
+- Frozen source commit: `a2a14391c643e0344f79ec28992f837dabe9d6b2`
+- Contract SHA-256: `13a66b47654eb8168ef0a37bb8f94fd687c29b69b546702e3c231dedd9c0850f`; Git blob `5bc9af022446427ebce23e78b6c747122958c909`; source length `42,674` bytes.
+- Source parity: **verified byte-for-byte** through the Explorer's Contract → Code source. Its raw UTF-8 text was hashed and matched the repository SHA-256 and byte length.
 - Deployment receipt: `FINALIZED`, `MAJORITY_AGREE`, leader GenVM `SUCCESS`.
-- `get_info()`: `name=Polyglot`, `version=0.1.0`, `min_escrow_wei=1000000000000000`, `minimum_confidence=80`, `max_review_attempts=3`, `retry_cooldown_seconds=300`, `review_window_seconds=604800`, `transfer_semantics=dispatch_is_not_child_transfer_credit`.
-- Release gate: 63 Direct Mode tests passed, 0 skipped/failed; GenVM lint, ABI/schema, and preflight passed.
-- GitHub Actions for the frozen source commit: [run 38415012174](https://github.com/Bibidee/polyglot/actions/runs/38415012174), **success**.
+- `get_info()`: `name=Polyglot`, `version=0.1.3`, `min_escrow_wei=1000000000000000`, `minimum_confidence=80`; the live call also reported the configured review budgets and transfer semantics.
+- Release gate for the frozen source commit: 161 Direct Mode tests passed, 0 skipped/failed; GenVM lint, ABI/schema, and preflight passed. GitHub Actions [run 38442885261](https://github.com/Bibidee/polyglot/actions/runs/38442885261) completed successfully.
 
-## Live approved-and-paid lifecycle
+## v0.1.3 live approved-and-paid lifecycle
+
+This fresh task was executed on the v0.1.3 deployment using two Polyglot-specific accounts: publisher `0x7AFc209aD72153f6c8Ae7B8055bfbA6E7f4d5EfC` and designated translator `0x8F41F2dA6636Eb802fa138b9558635c765fF211d`. No credentials are recorded here. The task used commit-pinned artifacts from repository commit `9e49bb1f4b6f39655690599d9e0f38a8af30ea6d`:
+
+- Source notice: [live_source_notice.txt](https://raw.githubusercontent.com/Bibidee/polyglot/9e49bb1f4b6f39655690599d9e0f38a8af30ea6d/evidence/live_source_notice.txt), SHA-256 `0xfe82020d464226218f0dfedc347023d68e83c48a50a04325de5834f8d802c05b` (127 exact raw bytes).
+- Spanish translation: [live_translation_es.txt](https://raw.githubusercontent.com/Bibidee/polyglot/9e49bb1f4b6f39655690599d9e0f38a8af30ea6d/evidence/live_translation_es.txt), SHA-256 `0x0763688d89cc6a6893f281b10737103d382b2c344683bab291accb244511bdd6` (142 exact raw bytes).
+- Task: `PG-CODEX-LIVE-1791933532141`; brief required checking that the Spanish notice preserved opening hours `09:00–17:00 Monday through Friday` and closure on public holidays.
+- Deposit: `0.001 GEN` (`1000000000000000` wei); task accounting was solvent while funded and returned to zero liabilities after settlement.
+
+| Action | Transaction | Finalized result |
+| --- | --- | --- |
+| Create task | [`0x340d0b96f9f3e4fc3df4d9a4e2ca6c7ca017d500fd54a511858ff329cba02f6d`](https://explorer-studio.genlayer.com/tx/0x340d0b96f9f3e4fc3df4d9a4e2ca6c7ca017d500fd54a511858ff329cba02f6d) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; state `awaiting_acceptance`. |
+| Translator accepts | [`0x0a22250c4a8e82b748fcbc0db84fa19aa16e258a4a21f0c05c9c1b8a65c9ad47`](https://explorer-studio.genlayer.com/tx/0x0a22250c4a8e82b748fcbc0db84fa19aa16e258a4a21f0c05c9c1b8a65c9ad47) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`. |
+| Deposit publisher credit | [`0x95bbedf5a41217a96f0b7dacf2f640790f091fd103296d6d9c8bdfad7765591e`](https://explorer-studio.genlayer.com/tx/0x95bbedf5a41217a96f0b7dacf2f640790f091fd103296d6d9c8bdfad7765591e) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; `value_credited=true`. |
+| Fund task | [`0x85c666dceeb2e394e7fd2bb57808d3b0e3754fc5bca213b2bf5a45a786451739`](https://explorer-studio.genlayer.com/tx/0x85c666dceeb2e394e7fd2bb57808d3b0e3754fc5bca213b2bf5a45a786451739) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; state `pending`, deposited `1000000000000000` wei. |
+| Submit translation | [`0xc13c93f94b8f8aaf74ffe27a55440658f7e24e9481be82b359e20c62b32c2530`](https://explorer-studio.genlayer.com/tx/0xc13c93f94b8f8aaf74ffe27a55440658f7e24e9481be82b359e20c62b32c2530) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; state `submitted`. |
+| Semantic review | [`0xd7ecec3b18cd8edbecfb50649f9426d049f37461f5e7b2001e27f1737184546a`](https://explorer-studio.genlayer.com/tx/0xd7ecec3b18cd8edbecfb50649f9426d049f37461f5e7b2001e27f1737184546a) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`, 5/5 votes revealed in one round; state `approved`, confidence `98`. |
+| Settle payout | [`0x199d3cdb3e6e9fda520a8c5f1cdc05b50ea0a1511a2a0b3de4be783eaa11fd36`](https://explorer-studio.genlayer.com/tx/0x199d3cdb3e6e9fda520a8c5f1cdc05b50ea0a1511a2a0b3de4be783eaa11fd36) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; state `payout_dispatched`, deposited `0`, translator dispatch `1000000000000000` wei. |
+| Child transfer credit | [`0x5689fd6b15382c7bce1aee884dc5d2201a0f15d8cc765b0106e84eb5a6458379`](https://explorer-studio.genlayer.com/tx/0x5689fd6b15382c7bce1aee884dc5d2201a0f15d8cc765b0106e84eb5a6458379) | `FINALIZED`, `value_credited=true`, `1000000000000000` wei credited to the designated translator. The recipient balance read was `1001000000000000000` wei. |
+
+The stored rationale was: “Source is English and translation is Spanish, both matching declarations. All material content is faithfully preserved: opening hours 09:00–17:00, Monday through Friday, and closure on public holidays are accurately rendered. No terms added or omitted. No discrepancy introduces or conceals any material risk.” This proves the reviewed approval and actual child credit. The parent task's terminal state remains `payout_dispatched`; do not treat that state alone as proof of payment. The separate child receipt and recipient balance provide the credit evidence.
+
+## v0.1.3 live material-rejection and publisher-refund lifecycle
+
+This separately tests a clear substantive mismatch on the same source-matched v0.1.3 deployment. It used Polyglot publisher `0x7AFc209aD72153f6c8Ae7B8055bfbA6E7f4d5EfC` and translator `0x8F41F2dA6636Eb802fa138b9558635c765fF211d`. The publisher set both pre-agreed deadline translator shares to `0` basis points, and the translator accepted those terms before funding. No credentials are recorded.
+
+- Task: `PG-REJECT-20261014-1791937278`; brief required preserving weekday hours and the public-holiday closure condition.
+- Source notice: [commit-pinned source](https://raw.githubusercontent.com/Bibidee/polyglot/a33b7e66ebedab4d440fedfc245a787f8e6957cb/evidence/live_source_notice.txt), SHA-256 `0xfe82020d464226218f0dfedc347023d68e83c48a50a04325de5834f8d802c05b` (127 exact raw bytes). It says the library is closed on public holidays.
+- Spanish translation: [commit-pinned material-mismatch fixture](https://raw.githubusercontent.com/Bibidee/polyglot/a33b7e66ebedab4d440fedfc245a787f8e6957cb/evidence/live_material_mismatch_es.txt), SHA-256 `0xefdeabd37d22e98fae998add1c3565645bb50b410b620dbb05090332ed0c6f78` (146 exact raw bytes). It says the library remains open on public holidays.
+- Escrow: `0.001 GEN` (`1000000000000000` wei). Non-submission and unresolved-review translator shares were both `0` bps. The task's fixed review deadline was Unix timestamp `1792552995`.
+
+| Action | Transaction | Finalized result |
+| --- | --- | --- |
+| Create task | [`0x3e05c86422a6b35d5841dd2989a4b7d08e6bda9b9f61d086927b1a07cffc31c1`](https://explorer-studio.genlayer.com/tx/0x3e05c86422a6b35d5841dd2989a4b7d08e6bda9b9f61d086927b1a07cffc31c1) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; canonical state `awaiting_acceptance`. |
+| Translator accepts | [`0xb593198c9635e00159125b54e1beb6512736ad296dc8cdf9849b19714aaebdb6`](https://explorer-studio.genlayer.com/tx/0xb593198c9635e00159125b54e1beb6512736ad296dc8cdf9849b19714aaebdb6) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; state `awaiting_funding`. |
+| Deposit publisher credit | [`0x43895744b94bc42c2007052e1e53d847d4078635385d7182d215ae421f4bbdc5`](https://explorer-studio.genlayer.com/tx/0x43895744b94bc42c2007052e1e53d847d4078635385d7182d215ae421f4bbdc5) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; `value_credited=true`, exactly `1000000000000000` wei. |
+| Fund task | [`0x42747cea89e4c295b416890c7c526cfe26e10d3d283bace6013f3f3d427abd11`](https://explorer-studio.genlayer.com/tx/0x42747cea89e4c295b416890c7c526cfe26e10d3d283bace6013f3f3d427abd11) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; state `pending`, full amount locked. |
+| Submit translation | [`0x6ce64340e41f0d593f137fcbaa1a33250212921ce9d077ee7d67e41b7a64d1b1`](https://explorer-studio.genlayer.com/tx/0x6ce64340e41f0d593f137fcbaa1a33250212921ce9d077ee7d67e41b7a64d1b1) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; state `submitted` with the committed translation URL/hash. |
+| Semantic review | [`0x8e235f5e76e72952cb790bdcff907ad2ae4e14302e6cbf703a70e45d8f7a5826`](https://explorer-studio.genlayer.com/tx/0x8e235f5e76e72952cb790bdcff907ad2ae4e14302e6cbf703a70e45d8f7a5826) | `FINALIZED`, `MAJORITY_AGREE`, leader GenVM `SUCCESS`; three validators agreed and two disagreed across four rounds. Canonical state `rejected`, confidence `90`. |
+| Dispatch publisher refund | [`0x8e0de3d06b2ed9c1b486511f24acfbb8f5cfd1681938359c154908864feded99`](https://explorer-studio.genlayer.com/tx/0x8e0de3d06b2ed9c1b486511f24acfbb8f5cfd1681938359c154908864feded99) | `FINALIZED`, `MAJORITY_AGREE`, GenVM `SUCCESS`; canonical state `refund_dispatched`, deposited `0`, publisher dispatch `1000000000000000` wei. |
+| Refund child transfer | [`0xe4513687e673ad23175e374de5d12080fafb8b96654b384a0f246e2c49ac9867`](https://explorer-studio.genlayer.com/tx/0xe4513687e673ad23175e374de5d12080fafb8b96654b384a0f246e2c49ac9867) | `FINALIZED`; child receipt reports `value_credited=true`, value `1000000000000000` wei, from the Polyglot contract to the publisher. Its result label is `NO_MAJORITY`; the explicit credited-value field confirms the transfer was credited despite that child result label. |
+
+The exact stored rationale was: “Public holiday closure reversed to 'open' in translation, altering core condition and introducing material discrepancy.” Final `get_task()` showed `refund_dispatched`, deposited `0`, `publisher_refund_dispatched`, publisher dispatch `1000000000000000` wei, translator dispatch `0`. Final `get_accounting()` showed zero liabilities, zero locked escrow, no balance shortfall, and `solvent=true`. This is evidence for this specific material-rejection/refund path, not a guarantee that every semantic review will reach a determinate result. If a different review is unresolved, its accepted fallback remains time-gated until the stored review deadline.
+
+The earlier v0.1.0 lifecycle below is historical and is not evidence for the current deployment.
+
+## Historical v0.1.0 live approved-and-paid lifecycle
 
 Task `PG-LIVE-20261013-02` used distinct publisher and translator accounts. The publisher deposited the minimum reward of `0.001 GEN` (`1000000000000000` wei). The accounts below are public addresses; no signing secrets are included.
 
@@ -40,6 +85,28 @@ The first attempted task ID was `PG-LIVE-20261013-01`, using display names `Engl
 
 This also illustrates an operational rule for v0.1.0: supply normalized language tags such as `en` and `es`, not display names. Do not send value-bearing calls until all arguments have been checked against the deployed schema and language-tag rules.
 
-## Release checks and limitations
+## Historical v0.1.1 candidate and hosted CI
 
-The source is frozen at the commit listed above; documentation may advance independently. Run the pinned release gate before source changes. A future contract-source change requires a new deployment and source-parity verification. The contract cannot guarantee consensus finalization, legal correctness, external host availability, or recovery of value credited by a failed payable call. `payout_dispatched` alone is not proof of recipient credit; the child receipt and recipient balance are checked above for this successful payout.
+The v0.1.1 candidate was committed at `4f8a1ab5250a3279dfec440c3b8558cf80fa45eb`; its source SHA-256 was `ddbc3b6c69509fae227bfd59a1492887ac06e2023da74ceafe842dbbd6cf510f`. GitHub Actions run [38430058935](https://github.com/Bibidee/polyglot/actions/runs/38430058935) completed successfully for that candidate: 80 Direct Mode tests passed, with 0 failures and 0 skips, and lint, ABI, and preflight passed. This is historical evidence for v0.1.1 only, not for the current v0.1.3 release.
+
+## Historical v0.1.2 remediation candidate — superseded, NOT DEPLOYED
+
+Candidate commit `083e53487e9baa6ce413a39a456eaf21ea4e3f4f` and hosted CI run [38435878608](https://github.com/Bibidee/polyglot/actions/runs/38435878608) are historical v0.1.2 evidence only. The candidate had 99 passing Direct Mode tests; it was not deployed and has no source-parity or live-lifecycle evidence. Its single fallback-share API is superseded by v0.1.3. The v0.1.0 deployment above remains untouched and is superseded by the current v0.1.3 deployment.
+
+## v0.1.3 security remediation — deployed and live-verified
+
+The current remediation candidate changes task creation and stored terms: the publisher pre-sets `non_submission_translator_bps` and `unresolved_translator_bps` independently, and the named translator accepts both before funding. `non_submission_translator_bps` applies only if no translation is submitted by `completion_by`; `unresolved_translator_bps` applies only if a submitted task remains unresolved at `review_deadline`. Each share is bounded to 0–10,000 basis points, immutable after creation, and the other party may refuse the terms before funding. These are explicit scenario-specific allocations, not findings of fault or proof of work.
+
+Confidence is defined as overall confidence in the complete semantic classification. Both `approved` and `rejected` require confidence >=80. A lower-confidence apparent approval or material-defect classification is `inconclusive`, which cannot directly authorize settlement. An unresolved task may still settle at its applicable deadline using the corresponding pre-agreed share.
+
+The review budget is 12 ordinary finalized calls plus one reserved recovery call, and up to three ordinary semantic assessments plus one reserved assessment. Operational/evidence failures consume ordinary calls but not semantic assessments. The one reserve becomes available after either ordinary-call exhaustion or three semantic assessments, requires the normal cooldown, must occur before the fixed review deadline, and is never replenished. The bounded reserve is tested after twelve provider, source-availability, and source/translation hash failures, including recovery at the final reviewable second.
+
+`get_info()` reports the ordinary call budget (`12`), the one-call reserve, maximum total review calls (`13`), ordinary semantic assessment limit (`3`), maximum semantic assessments including reserve (`4`), and the minimum confidence (`80`). This avoids representing the ordinary limit as the total call cap.
+
+Frozen v0.1.3 source: SHA-256 `13a66b47654eb8168ef0a37bb8f94fd687c29b69b546702e3c231dedd9c0850f`; Git blob `5bc9af022446427ebce23e78b6c747122958c909`; `42,674` bytes. Direct Mode: `161 passed`, `0 skipped`, `0 failed`; lint, schema, and preflight passed. The initial release-gate run [38442040338](https://github.com/Bibidee/polyglot/actions/runs/38442040338) passed for source commit `1c6ddc779f009996ce11e3bcc7e1a1509f283b3a`; the frozen release commit's successful CI is [run 38442885261](https://github.com/Bibidee/polyglot/actions/runs/38442885261). Deployment finality and byte-for-byte source parity are recorded at the top of this document; the live lifecycle is recorded above.
+
+The later test-only candidate `a33b7e66ebedab4d440fedfc245a787f8e6957cb` added regression coverage for invalid translation evidence and premature recovery-call exhaustion without changing the frozen contract. Its exact-head GitHub Actions run [38488674634](https://github.com/Bibidee/polyglot/actions/runs/38488674634) passed with 162 tests, 0 skips, and 0 failures. The documentation-only live-evidence update is revalidated locally; its hosted check is tracked separately on the resulting commit.
+
+The accounting invariant and child-transfer limitation remain unchanged from v0.1.2: liabilities are cleared and per-recipient intended amounts recorded before dispatch; two split transfers can have different child outcomes, and dispatch is not proof of recipient credit. Reconcile each recipient against the child receipt, `value_credited`, and balance. Do not blindly retry a failed child. The v0.1.0 evidence below is historical and does not certify v0.1.3; current v0.1.3 deployment and lifecycle evidence is recorded above.
+
+Release status: v0.1.3 is deployed on Studionet; source parity, release gate, live approval/payout, and material-rejection/refund lifecycles are verified. The v0.1.0 deployment and its separate failed payable-call evidence remain historical; do not present that address as the current release. See [DESIGN.md](DESIGN.md) for the full state machine and [README.md](../README.md) for usage and limitations.

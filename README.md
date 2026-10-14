@@ -1,71 +1,73 @@
 # Polyglot
 
-**Polyglot is a standalone GenLayer Intelligent Contract for hash-bound translation review with GEN escrow.** A publisher commits a notice, specifies source and target languages, names a translator, and funds a reward. The translator commits the translated notice. Validators independently fetch and verify the exact source and translation bytes, then assess whether the translation preserves material meaning. Optional hash-bound images let vision-capable validators inspect source and translated scans alongside text.
+**Polyglot is a standalone GenLayer Intelligent Contract for hash-bound semantic review of translations, with GEN escrow.** A publisher commits a notice, names a translator, and proposes the unresolved-task split. The named translator must accept those exact terms before any escrow is allocated. Validators then independently retrieve the exact committed source and translation bytes and assess whether rights, duties, dates, amounts, conditions, exceptions, and material meaning survive translation. Optional hash-bound images can provide visual context.
 
-This is a contract primitive, not a translation frontend or a claim that an AI can certify legal correctness. It is designed for notices where preserving meaning matters: appeal instructions, public-service notices, safety procedures, and policy communications.
+It is a reusable contract primitive, not a translation frontend, legal service, or claim that an AI can certify correctness.
 
 ## Why GenLayer?
 
-A conventional contract can verify byte commitments and enforce deadlines, but cannot itself compare obligations across languages. A single off-chain service could make a selective or unauditable decision. Polyglot puts artifact retrieval and bounded semantic review inside GenLayer's independent validator process. The contract—not the model—derives the authorization outcome, controls the recipient, and accounts for the escrow.
+A deterministic contract can enforce byte commitments and payouts but cannot itself compare legal or procedural meaning across languages. A single off-chain verifier can selectively return an approval without an independently reproduced judgment. Polyglot asks GenLayer validators to fetch the same committed artifacts and independently make the bounded semantic assessment; deterministic contract code alone derives the authorization and determines the fixed recipient.
 
-Validators compare the decision outcome, not rationale wording. A payout is possible only if each valid result independently meets the entire safe tuple: both declared languages match, material meaning and each critical dimension are preserved, no material terms were added or omitted, risk is `no`, and confidence meets the threshold. Two validators agreeing on a non-approval can finalize a rejection or uncertainty even if they identify different reasons; neither path releases the translator reward. Approval-versus-non-approval disagreement fails equivalence.
-
-The design reduces avoidable disagreement by comparing a small derived outcome rather than prose; it cannot guarantee that a transaction will finalize. Providers, web hosts, or validators can still fail or disagree, and GenLayer may leave a transaction undetermined. No state from an undetermined transaction is treated as authorization.
+Validators do not compare free-form rationale. Confidence means overall confidence in the complete classification set. Both approval and rejection require confidence of at least 80; anything lower is `inconclusive` and cannot directly authorize either settlement path. For rejection, which authorizes a publisher refund, validators must also agree on every bounded material classification field; different explanations of the same exact classification are acceptable, but different defect dimensions fail equivalence. `inconclusive`, transient failures, and evidence issues never authorize an immediate payout. A still-unresolved task may eventually reach the separate deadline allocation both parties accepted before funding. The Equivalence Principle cannot guarantee that every transaction finalizes; disagreement or provider failures can still delay a task until that disclosed allocation.
 
 ## Lifecycle
 
 ```text
-Publisher creates task + deposits reward
-        |
-        v
-     pending -- publisher cancels before acceptance --> refund dispatched
-        |
-        +-- named translator accepts --> accepted
-                                      |
-                                      +-- submits hash-bound translation --> submitted
-                                                                              |
-                                                                      semantic review
-                                                         +--------------------+------------------+
-                                                         |                    |                  |
-                                                      approved             rejected          inconclusive
-                                                         |                    |                  |
-                                                translator payout       publisher refund    no payout;
-                                                                                           bounded retry
-
-pending / accepted / submitted / retryable / inconclusive
-        -- corresponding public deadline --> publisher refund
+publisher creates terms and selects separate non-submission and unresolved-review shares (nonpayable)
+  -> awaiting_acceptance
+translator accepts exact terms
+  -> awaiting_funding
+publisher deposits GEN to own credit, then allocates exact reward
+  -> pending
+translator submits immutable translation/image hashes
+  -> submitted
+participant requests review
+  -> approved -> payout dispatched to translator
+  -> rejected  -> refund dispatched to publisher
+  -> inconclusive / retryable / disputed -> re-review within limits
+unsubmitted task reaches completion deadline
+  -> fallback_settled using the non-submission share accepted before funding
+unresolved submitted task reaches review deadline
+  -> fallback_settled using the unresolved-review share accepted before funding
 ```
 
-Only the named translator can accept and submit. Only the publisher can cancel, and only before acceptance. Settlement is permissionless but uses the fixed translator or publisher stored in task state. The `deposited` ledger is zeroed and terminal state written before emitting the transfer. The payout amount comes from that ledger, never from model output or a caller argument.
+An unfunded task can be cancelled without a transfer. A funded task cannot be unilaterally cancelled. Both parties may optionally agree to a different early split while the task is disputed. The deadline fallback is permissionless and cannot be changed by one party after acceptance. State and per-recipient intended transfer amounts are written before child transfers are emitted.
 
-## Semantic and evidence rules
+## Evidence and review rules
 
-- Language inputs use normalized language tags such as `en` and `es`, not display names such as `English` and `Spanish`.
-- Source and translation artifacts are HTTPS URLs committed with normalized SHA-256 digests. The reviewer hashes exact raw response bytes before UTF-8 decoding.
-- Optional source and translation images are each separately URL/hash-bound, size-limited, and restricted to PNG, JPEG, or WebP signatures. Up to two images are sent as untrusted visual evidence to the prompt.
-- The prompt explicitly treats document text, images, and the publisher brief as untrusted data; instructions embedded in them must not be followed.
-- Approval requires exact bounded fields for source/target language match, meaning, rights/duties, dates/amounts/conditions, exceptions, additions/omissions, risk, confidence, and rationale. Rationale is informational only.
-- Definitive material mismatch is `rejected` and makes the publisher refund available. Uncertainty is `inconclusive`; malformed model output or unavailable sources are `retryable`. None authorizes a payout.
-- Retry attempts are bounded. The public timeout refund prevents an unresolved task from holding funds forever, subject to somebody submitting the refund transaction.
+- Source and translation URLs are HTTPS and committed with SHA-256 hashes. Exact raw bytes are hashed before text decoding.
+- Optional source and translation images have separate hash commitments, size bounds, and PNG/JPEG/WebP signature checks.
+- The prompt treats text, images, and the publisher brief as untrusted data. Instructions inside artifacts are not reviewer instructions.
+- Approval requires exact bounded classifications for language, meaning, rights/duties, dates/amounts/conditions, exceptions, additions/omissions, and risk, plus confidence of at least 80. A definitive rejection also requires confidence of at least 80 and validator agreement on the bounded defect classifications. Below 80, every semantic tuple is `inconclusive`; rationale never authorizes payment.
+- A semantic rejection is consensus-critical because it permits a publisher refund: validators must agree on all bounded classification dimensions, not merely the word `rejected`. Rationale and above-threshold confidence differences do not matter when the same semantic dimensions yield that same outcome.
+- HTTP 404/408/410/425/429, redirects, 5xx, network exceptions, malformed model output, and consensus execution problems are non-authorizing and retryable. Other evidence integrity issues become `disputed`, but the original commitments remain fixed and the contract allows re-review during the recovery window.
+- Review is bounded to at most 12 ordinary finalized calls plus one reserved recovery call. Up to 3 ordinary valid semantic assessments plus one reserved final assessment may occur. Operational and evidence failures use the ordinary call budget but do not consume the semantic-assessment count. The reserve can be used once after ordinary call exhaustion or after three semantic assessments, including during restored-evidence recovery near the deadline. It is never replenished. Cooldowns double from 5 minutes up to 6 hours, and the fixed review deadline remains an absolute cutoff.
 
-## Escrow and transfer limits
+## Funding and unresolved-task economics
 
-Creation is payable; `gl.message.value` is the only deposit amount, and deposits below 0.001 GEN are rejected. The agreed `reward_wei` term is stored separately from the actual `deposited` liability. Settlement reads only the deposited ledger, clears it before emitting the transfer, and permits one terminal dispatch per task.
+`create_task` is nonpayable and records two independently chosen basis-point shares: `non_submission_translator_bps` and `unresolved_translator_bps`, each from 0 to 10,000. The first applies only when no translation is submitted by the completion deadline. The second applies only after submission when review remains unresolved at the review deadline. The named translator must call `accept_task` before the publisher can fund the task; that acceptance covers both shares and all task terms. The publisher then uses payable `deposit_credit()` to add credit only to the actual sender's ledger and nonpayable `fund_task()` to allocate the exact reward. Excess credit remains withdrawable by its owner. No caller can change either accepted share after task creation; a different early split requires both participants' explicit agreement.
 
-`payout_dispatched` means the contract emitted a transfer message; it does not by itself prove the translator's wallet was credited. Integrators should verify the finalized child-transfer receipt and credited value where the network exposes them. A failed downstream transfer may not be recoverable by this contract.
+These are explicit allocations of distinct deadline risks, not adjudications of fault. The publisher chooses both proposed shares and the translator can refuse them; both should set them deliberately before work. A non-submission share is not applied to a submitted task, and an unresolved-review share is not applied to a task that never reached submission. The contract cannot determine from a missing host, hash mismatch, provider failure, or validator disagreement which participant caused the problem or how much work was performed. If no semantic result is reached by the applicable deadline, that scenario's accepted share is applied mechanically. This avoids indefinite escrow lockup but may not reflect fault or actual work performed; participants must choose terms they consider acceptable.
+
+The liability invariant is:
+
+```text
+total_accounted_liabilities = total_available_credits + total_locked_task_escrow
+```
+
+Settlement clears the task ledger and aggregate liability before dispatch. `get_accounting()` compares that ledger against the contract balance and exposes any shortfall or unallocated balance.
+
+## Transfer reconciliation limitation
+
+An emitted value transfer creates a child transaction: the amount leaves the sender and is held in the message before recipient credit; if the child fails, the value is not automatically returned. A split uses separate children, so one beneficiary can receive credit while the other does not, even though the task is terminal and both intended amounts are recorded. The contract cannot confirm downstream credit or recover a failed child itself. Integrators must compare each finalized parent transaction and task per-beneficiary amount with the corresponding exposed child receipt, `value_credited`, and recipient balance. Do not describe a `*_dispatched` or `*_settled` state as proof both beneficiaries were paid. See the official [GenLayer value-transfer documentation](https://docs.genlayer.com/developers/intelligent-contracts/features/value-transfers) and [message lifecycle documentation](https://docs.genlayer.com/developers/intelligent-contracts/features/messages).
 
 ## Security boundaries
 
-- SHA-256 proves fetched-byte identity, not who authored a notice or whether its claims are true.
-- HTTPS checks reject obvious malformed, local, and IP-literal targets. They cannot guarantee public DNS resolution, redirect safety, or domain ownership.
-- Semantic review is not legal advice and cannot establish that the source notice is lawful or authoritative.
-- Visual interpretation can miss text, layout, handwriting, or context. It is corroborative evidence, not OCR certification.
-- Consensus can disagree or remain undetermined; only finalized approved state enables translator settlement.
-- GEN transfer dispatch and recipient credit are separate facts.
+SHA-256 proves byte identity, not source authorship or truth. URL admission cannot pin DNS resolution, prohibit all redirects, or establish host control. Semantic judgment is probabilistic, is not legal advice, and may remain undetermined. Images are evidence, not certified OCR. The payable credit method is intentionally minimal, but no contract can eliminate every platform/runtime failure mode. The v0.1.0 deployment and its historical child-transfer proof do not include the v0.1.3 candidate behavior.
 
-## Build and release gate
+## Build and verification
 
-Use Python 3.12 and the pinned tooling:
+Use the pinned Python/GenLayer tooling:
 
 ```bash
 python -m pip install -r requirements.txt
@@ -75,10 +77,12 @@ genvm-lint check contracts/polyglot.py --json
 genvm-lint schema contracts/polyglot.py --output artifacts/polyglot.abi.json
 ```
 
-Preflight requires exactly one deployable Python source, compiles source and tests, lints only `contracts/polyglot.py`, compares generated ABI with the tracked schema, and fails on test failures or skips. GitHub Actions runs this complete gate.
+Preflight checks the one deployable contract, syntax, all Direct Mode tests, lint, and exact ABI match. The source pins its GenLayer dependency; requirements pin the test/linter stack.
 
-The contract header pins the GenLayer SDK dependency. Direct Mode is pinned to `genlayer-test==0.29.2`, stable validation runner `v0.2.16`, `genvm-linter==0.11.0`, and `pytest==9.1.1`. GenLayer's current developer guidance is available at [GenLayer Skills](https://skills.genlayer.com/), [Calling LLMs](https://docs.genlayer.com/developers/intelligent-contracts/features/calling-llms), [Image Processing](https://docs.genlayer.com/developers/intelligent-contracts/features/image-processing), [Web Access](https://docs.genlayer.com/developers/intelligent-contracts/features/web-access), [Value Transfers](https://docs.genlayer.com/developers/intelligent-contracts/features/value-transfers), and [The Equivalence Principle](https://docs.genlayer.com/developers/intelligent-contracts/equivalence-principle).
+## Deployment status
 
-## Deployment
+The current submission deployment is **Polyglot v0.1.3** on Studionet: [`0x7B68e7E83BcBF6290c2Ef2C78663059ae0D131F8`](https://explorer-studio.genlayer.com/address/0x7B68e7E83BcBF6290c2Ef2C78663059ae0D131F8), deployed by [`0x8e580d0c2fd418c62bd2f0c8b5f0246b1c7b297a3348049cee2911530fea23e0`](https://explorer-studio.genlayer.com/tx/0x8e580d0c2fd418c62bd2f0c8b5f0246b1c7b297a3348049cee2911530fea23e0). Its 42,674-byte Explorer source matches the frozen repository contract byte-for-byte at SHA-256 `13a66b47654eb8168ef0a37bb8f94fd687c29b69b546702e3c231dedd9c0850f`. The finalized deployment reports `MAJORITY_AGREE` and GenVM `SUCCESS`; `get_info()` reports version `0.1.3`.
 
-Polyglot v0.1.0 is deployed on Studionet at [`0x1E0239EBd297b29339Ec4cA767388C79EACc9078`](https://explorer-studio.genlayer.com/address/0x1E0239EBd297b29339Ec4cA767388C79EACc9078). The frozen source hash is `498762a5c8b3426f21eb8499ee793e97d77d81a1b437430efb5378f85c3ba1d9`; deployed source parity is verified. A live `pending -> accepted -> submitted -> approved -> payout_dispatched` flow completed, and the child transfer receipt confirmed `0.001 GEN` credited to the designated translator. See [the complete deployment and live-evidence record](docs/DEPLOYMENT.md) for transaction links and the failed-input attempt that left 0.001 GEN unaccounted for in this deployment. That known limitation does not affect the successful task's recorded payout, but it should be considered before using this v0.1.0 deployment for further funded tasks.
+The v0.1.3 release-gate run [38442885261](https://github.com/Bibidee/polyglot/actions/runs/38442885261) completed successfully for frozen source commit `a2a14391c643e0344f79ec28992f837dabe9d6b2`: 161 Direct Mode tests passed, with 0 skipped and 0 failed; lint, schema, and preflight passed. The v0.1.1 run [38430058935](https://github.com/Bibidee/polyglot/actions/runs/38430058935) and v0.1.2 run [38435878608](https://github.com/Bibidee/polyglot/actions/runs/38435878608) remain historical candidate checks.
+
+The v0.1.3 live lifecycles demonstrate both semantic approval and a concrete material rejection. Task `PG-CODEX-LIVE-1791933532141` was approved at confidence 98 and its finalized child transfer credited the designated translator. Separate task `PG-REJECT-20261014-1791937278` used a Spanish notice that reversed the source's public-holiday closure condition; validators reached `MAJORITY_AGREE`, the task was rejected at confidence 90, and the full 0.001 GEN escrow was refunded to the publisher. The refund child receipt reports `FINALIZED` and `value_credited=true`; its result label is `NO_MAJORITY`, so the explicit credited-value field—not the label alone—is the transfer proof. Full transaction and canonical-state evidence is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). The v0.1.0 deployment and lifecycle remain clearly labeled as historical there.
